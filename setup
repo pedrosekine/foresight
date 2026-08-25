@@ -1,0 +1,65 @@
+#!/bin/bash
+# Installing the userscript is a browser action, so this is the rest: the
+# palette feed the theming half reads from. Skip it entirely and the
+# userscript still works — it just leaves OWA's own colours alone.
+
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")" && pwd)
+UNIT=omarchy-owa-theme.service
+UNIT_DIR="$HOME/.config/systemd/user"
+PALETTE="$HOME/.local/state/omarchy/current/theme/colors.toml"
+PORT=8787
+
+say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[33m==>\033[0m %s\n' "$*" >&2; }
+fail() { printf '\033[31m==>\033[0m %s\n' "$*" >&2; exit 1; }
+
+if [[ ${1:-} == --uninstall ]]; then
+  say "Removing $UNIT"
+  systemctl --user disable --now "$UNIT" 2>/dev/null || true
+  rm -f "$UNIT_DIR/$UNIT"
+  systemctl --user daemon-reload
+  say "Done. The userscript is unaffected — remove it in your userscript manager."
+  exit 0
+fi
+
+command -v python3 >/dev/null || fail "python3 not found"
+# tomllib landed in 3.11; older interpreters would fail at import time with a
+# far less obvious message than this one.
+python3 -c 'import tomllib' 2>/dev/null \
+  || fail "python3 is too old — tomllib needs 3.11+ (found $(python3 -V))"
+
+if [[ ! -f $PALETTE ]]; then
+  warn "No Omarchy palette at $PALETTE"
+  warn "The feed will return 500 until a theme is set. Install continues."
+fi
+
+# Only a conflict if the listener isn't us — re-running setup is expected to
+# find our own service already bound.
+if ! systemctl --user is-active --quiet "$UNIT" \
+   && ss -ltn 2>/dev/null | grep -q "127.0.0.1:$PORT "; then
+  warn "Something already listens on 127.0.0.1:$PORT."
+  warn "If it isn't this service, change PORT in theme-server.py and themeUrl in the userscript."
+fi
+
+say "Installing $UNIT for $ROOT"
+mkdir -p "$UNIT_DIR"
+sed "s|@INSTALL_DIR@|$ROOT|g" "$ROOT/$UNIT" > "$UNIT_DIR/$UNIT"
+
+systemctl --user daemon-reload
+systemctl --user enable --now "$UNIT"
+
+# Give it a moment to bind before declaring victory.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if curl -fsS "http://127.0.0.1:$PORT/theme.json" >/dev/null 2>&1; then
+    say "Palette feed is up on http://127.0.0.1:$PORT/theme.json"
+    say "Install owa-minimal.user.js in your userscript manager and you're done."
+    exit 0
+  fi
+  sleep 0.3
+done
+
+warn "Service installed but the feed did not answer in 3s."
+warn "Check: systemctl --user status $UNIT"
+exit 1

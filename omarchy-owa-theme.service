@@ -1,0 +1,21 @@
+[Unit]
+# Template — ./setup substitutes @INSTALL_DIR@ and installs the result into
+# ~/.config/systemd/user/. Edit this file, not the installed copy.
+Description=Omarchy palette feed for the Outlook Web calendar userscript
+Documentation=file:@INSTALL_DIR@/README.md
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 @INSTALL_DIR@/theme-server.py
+Restart=on-failure
+RestartSec=2
+# loopback-only listener serving one JSON document; no reason for it to
+# reach anything else on the system
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target
