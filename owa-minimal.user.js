@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.0.2
+// @version      3.1.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -72,20 +72,52 @@
     get: (typeof GM_getValue === 'function') ? (k => GM_getValue(k)) : null,
     set: (typeof GM_setValue === 'function') ? ((k, v) => GM_setValue(k, v)) : null,
   };
+  // Seeding puts the defaults in the manager's Values tab so they can be
+  // edited — but a stored value then beats the code default forever, so a
+  // better default would never reach anyone who had already installed.
+  // The seeded value is recorded alongside: if what is stored is still that
+  // untouched seed and the default has since moved, the new one wins.
+  // Anything actually edited is left alone.
+  const SEED_PREFIX = '_seeded:';
+
+  // Defaults shipped by earlier versions, from before the seed was
+  // recorded. A stored value matching one of these is taken as untouched;
+  // anything else is treated as deliberate and never overwritten.
+  const SUPERSEDED = { startHour: [7] };
+
   function setting(key) {
     const fallback = DEFAULTS[key];
     if (!store.get) return fallback;
     try {
-      const v = store.get(key);
-      if (v === undefined || v === null || v === '') {
-        if (store.set) store.set(key, fallback);  // seed, so it shows up in the UI
+      const stored = store.get(key);
+      const seed = value => {
+        if (!store.set) return;
+        store.set(key, value);
+        store.set(SEED_PREFIX + key, value);
+      };
+
+      if (stored === undefined || stored === null || stored === '') {
+        seed(fallback);
         return fallback;
       }
+
+      const seeded = store.get(SEED_PREFIX + key);
+      const noRecord = seeded === undefined || seeded === null;
+      const untouched = noRecord
+        ? (SUPERSEDED[key] || []).some(v => String(v) === String(stored))
+        : String(seeded) === String(stored);
+
+      if (untouched && String(stored) !== String(fallback)) {
+        seed(fallback);
+        return fallback;
+      }
+      if (noRecord && store.set) store.set(SEED_PREFIX + key, stored);
+
       if (typeof fallback === 'number') {
-        const n = Number(v);
+        const n = Number(stored);
         return Number.isFinite(n) ? n : fallback;
       }
-      return v;
+      return stored;
     } catch (_) { return fallback; }
   }
 
@@ -208,12 +240,25 @@
     return cols.includes(localDate()) ? null : cols[0];
   }
 
-  // Only anchor left is the label, which is translated. Flagged in the
-  // README as the one selector that needs a fallback before sharing.
-  const saveButton = () => [...document.querySelectorAll('button')]
-    .filter(isVisible)
-    .find(b => /^save$/i.test((b.getAttribute('aria-label') || '').trim())
-            || /^save$/i.test((b.textContent || '').trim()));
+  // Save carries no id, but it does carry Office toolbar metadata that is
+  // the same in every locale: it is the only button in the compose with
+  // priorityid="3" / overfloworderid="-3". The English label is kept as a
+  // later fallback, and the last resort is positional — the first visible
+  // button in the command bar, which is Save in every layout seen so far.
+  function saveButton() {
+    const vis = els => [...els].filter(isVisible);
+    const byMeta = vis(document.querySelectorAll(
+      'button[priorityid="3"], button[overfloworderid="-3"]'))[0];
+    if (byMeta) return byMeta;
+
+    const byLabel = vis(document.querySelectorAll('button')).find(b =>
+      /^save$/i.test((b.getAttribute('aria-label') || '').trim())
+      || /^save$/i.test((b.textContent || '').trim()));
+    if (byLabel) return byLabel;
+
+    const bar = q('[data-owa-savebar]');
+    return bar ? vis(bar.querySelectorAll('button'))[0] : null;
+  }
 
   // Fluent's date summary listens on pointer events, not click. A bare
   // .click() on it does nothing at all — this is what opens the callout
@@ -362,8 +407,7 @@
     // Save alone, bottom right. The bar has to be the row that is a real
     // sibling of the form — marking an inner group instead leaves the
     // original toolbar strip behind as an empty box.
-    const save = [...modal.querySelectorAll('button')].filter(isVisible)
-      .find(b => /^save$/i.test((b.getAttribute('aria-label') || '').trim()));
+    const save = saveButton();
     if (save) {
       save.setAttribute('data-owa-savebtn', '');
       let bar = save;

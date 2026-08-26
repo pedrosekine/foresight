@@ -102,6 +102,10 @@ Violentmonkey's script editor has a **Values** tab with:
 | `themeUrl` | `http://127.0.0.1:8787/theme.json` | palette feed |
 | `themePollMs` | `3000` | how often to check it |
 
+Edited values are kept forever. Untouched ones follow the code default, so a
+better default still reaches an existing install — the script records what it
+seeded and only replaces a value that still matches it.
+
 ## How it works, and where it will break
 
 **Chrome removal** keys on `#OwaTitleBar`, `#LeftRail` and
@@ -155,6 +159,12 @@ focused*, so `reactSet` alone silently saves the old time; and when searching
 for those fields, our own row has to be excluded, because a native
 `input[type=date]` reports the same `YYYY-MM-DD` shape and wins on DOM order.
 
+**Save is found by Office toolbar metadata, not its label.** It has no id, but
+it is the only button in the compose carrying `priorityid="3"` /
+`overfloworderid="-3"`, which are the same in every locale. `aria-label="Save"`
+is kept as a fallback, and the last resort is the first visible button in the
+command bar.
+
 **Quick add strips the form by marking, not matching.** The rows it removes
 have no ids and vary in nesting depth, so it walks up from the title to
 `Form_Content` and marks every sibling branch leading to neither the title nor
@@ -162,10 +172,6 @@ the date — which drops the calendar picker, attendees, location, Teams toggle,
 body editor and preview pane in one pass. The modal itself has no explicit
 height (it is sized by flex growth), so the same walk marks the chain to shrink
 it. Markers are cleared when the compose closes so `n` still gets the full form.
-
-**The Save button is the weakest selector in the project** — it has no id, only
-`aria-label="Save"`, which is translated. Quick add will not save on a
-non-English Outlook until that gains a fallback.
 
 **Expect selector drift.** Microsoft changes this UI regularly, and the hostname
 already moved from `outlook.office.com` to `outlook.cloud.microsoft` once during
