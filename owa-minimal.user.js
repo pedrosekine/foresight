@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.6.2
+// @version      3.7.1
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -555,11 +555,7 @@
     // Whitelisting is the only reliable way: Outlook leaves ~50 focusable
     // controls in the modal, and focusing one inside the collapsed command
     // bar visibly grows the box.
-    // With our own fields off, Outlook's date row is the only way to change
-    // the date, so it stays in the tab order — Enter on it opens the picker.
-    const dateControl = QUICK_ADD_FIELDS ? null : dateRow();
-    const keepFocusable = new Set(
-      [save, q('[id$="_SUBJECT"] input'), dateControl].filter(Boolean));
+    const keepFocusable = new Set([save, q('[id$="_SUBJECT"] input')].filter(Boolean));
     for (const el of modal.querySelectorAll(FOCUSABLE)) {
       if (keepFocusable.has(el) || el.closest('#omarchy-qa-row')) continue;
       if (el.tabIndex < 0) continue;
@@ -639,8 +635,11 @@
   // sends Tab out of the modal entirely once past the last field.
   function quickAddStops() {
     const stops = [q('[id$="_SUBJECT"] input')];
+    // Outlook's date row is deliberately not a stop. It stays visible so
+    // the slot can be read, but it cannot be opened from the reduced box —
+    // see QUICK_ADD_FIELDS — and offering a control that does nothing is
+    // worse than not offering it. Use `n` to change a date.
     if (qaRow) stops.push(...qaRow.querySelectorAll('input'));
-    else stops.push(dateRow());
     stops.push(saveButton());
     return stops.filter(Boolean);
   }
@@ -673,16 +672,6 @@
   // which does not respond to a synthesised Enter. Reliable here because in
   // this mode the row is never hidden — it has been laid out since the box
   // opened, which is the condition the callout needs.
-  function onDateRowKey(e) {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    if (!quickAddActive || QUICK_ADD_FIELDS) return;
-    const row = dateRow();
-    if (!row || document.activeElement !== row) return;
-    e.preventDefault();
-    e.stopPropagation();
-    pointerClick(row);
-  }
-
   function onComposeEnter(e) {
     if (e.key !== 'Enter' || e.shiftKey) return;      // Shift+Enter stays a newline
     // Enter saves from anywhere while the quick-add box is open — the
@@ -868,6 +857,7 @@
        nesting depth varies, and the one obvious CSS route (a div holding
        two adjacent buttons) also matches other parts of the form. */
     html[data-owa-quickadd] [data-owa-hide] { display: none !important; }
+
 
     /* Nothing sets an explicit height — the modal is sized by flex growth,
        so it has to be told to shrink to what is left. */
@@ -1414,7 +1404,6 @@
   addEventListener('keydown', onShortcut, true);
   // Before onComposeEnter, so Enter on the date row opens the picker
   // instead of saving.
-  addEventListener('keydown', onDateRowKey, true);
   addEventListener('keydown', onQuickAddTab, true);
   addEventListener('keydown', onComposeEnter, true);
 

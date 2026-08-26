@@ -78,10 +78,11 @@ Add the flag by hand to any URL to opt a regular tab in.
 `c` is the fast path: it opens Outlook's compose stripped to **title, date/time
 and Save**, and focuses the title. Type and press Enter — saved.
 
-Tab cycles title → date row → Save and back, and never leaves the box. To
-change the date or time, Tab to the date row and press Enter (or click it):
-Outlook's own picker opens, and Tab then moves between its date, start and end
-fields until you close it with Escape.
+Tab cycles title → Save and back, and never leaves the box.
+
+**The date row is shown but not editable from the reduced box.** Outlook's date
+picker will not open while the box is reduced — see below. Use `n` for anything
+that is not at the slot shown.
 
 Own date and time fields are written and tabbable but disabled behind
 `QUICK_ADD_FIELDS`, because writing their values back into Outlook could not be
@@ -166,6 +167,13 @@ field hands focus to Save explicitly.
 **The fields are text, not `input[type=date|time]`.** The native ones split into
 `hh` / `mm` / `AM-PM` segments that are each their own tab stop, which made
 reaching the end time six presses instead of three.
+
+**The reduced box and Outlook's date picker are mutually exclusive.** With the
+hidden rows set to `display: none`, the picker never opens — not by script, and
+not by a real mouse click either. Unset that one rule and it opens every time.
+It does not mount inside a hidden branch (its ancestors carry no marker), so the
+mechanism is still unexplained; the boundary is simply reproducible. Toggling
+the rule at the moment of opening did not work either.
 
 **Outlook's date fields cannot be driven reliably.** They live in a callout
 that only opens when its row is laid out normally and has been for a moment:
