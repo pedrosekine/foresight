@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      2.6.0
+// @version      2.8.1
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -135,6 +135,147 @@
     q(`button[data-unique-id="Ribbon-${a.ribbon}"]`) ||
     q(`button[id="${a.ribbon}"]`) ||
     q(`button[aria-label="${a.title}"]`);
+
+  // Today / previous / next, in that order. Positional because their only
+  // distinguishing attribute is a translated aria-label ("Go to today").
+  function navButton(i) {
+    const tb = toolbar();
+    if (!tb) return null;
+    const btns = tb.querySelectorAll('button');
+    return btns.length >= 3 ? btns[i] : null;
+  }
+
+  // ---- quick add ------------------------------------------------------
+  // Outlook's compose can't be typed into: the date/time row is a
+  // <div role="button">, not a field. But clicking it expands into real
+  // inputs, so the whole form is drivable — no deeplink, no navigation,
+  // no iframe, and nothing lost from the current view.
+  const isVisible = el => !!el && el.getBoundingClientRect().height > 0;
+  const composeOpen = () => !!q('[id^="EVENT_CalendarCompose"]');
+
+  const localDate = (d = new Date()) => {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+
+  // Poll rather than observe: each step here is a React render away, and a
+  // short bounded wait is easier to reason about than a tree of observers.
+  function whenReady(check, cb, tries = 40) {
+    const found = check();
+    if (found) return cb(found);
+    if (tries <= 0) return console.warn('[owa-minimal] quick add: timed out');
+    setTimeout(() => whenReady(check, cb, tries - 1), 100);
+  }
+
+  // React keeps its own copy of an input's value and ignores direct
+  // assignment, so go through the prototype's native setter and then fire
+  // the events it listens for.
+  function reactSet(input, value) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // Which day the new event should land on. OWA always prefills today, and
+  // ignores the week you're looking at — so only override when today isn't
+  // on screen. Returning null means "leave OWA's own prefill alone", which
+  // already gives today at the current time for 30 minutes.
+  function targetDate() {
+    const cols = [...document.querySelectorAll('[data-column-date]')]
+      .map(e => e.dataset.columnDate).filter(Boolean).sort();
+    if (!cols.length) return null;
+    return cols.includes(localDate()) ? null : cols[0];
+  }
+
+  // Only anchor left is the label, which is translated. Flagged in the
+  // README as the one selector that needs a fallback before sharing.
+  const saveButton = () => [...document.querySelectorAll('button')]
+    .filter(isVisible)
+    .find(b => /^save$/i.test((b.getAttribute('aria-label') || '').trim())
+            || /^save$/i.test((b.textContent || '').trim()));
+
+  function setStartDate(iso, done) {
+    const collapsed = [...document.querySelectorAll('[role="button"]')].find(b =>
+      b.closest('[id$="_DATETIME"]') && /\d{4}-\d{2}-\d{2}/.test((b.textContent || '').trim()));
+    if (!collapsed) return done();
+    collapsed.click();                       // expands into real inputs
+    whenReady(
+      () => [...document.querySelectorAll('input')]
+        .filter(isVisible)
+        .find(i => /^\d{4}-\d{2}-\d{2}$/.test(String(i.value || ''))),
+      input => { reactSet(input, iso); done(); },
+      30);
+  }
+
+  function quickAdd() {
+    const newEvent = findControl({ ribbon: 2532, title: 'New event' });
+    if (!newEvent) return console.warn('[owa-minimal] quick add: no New event button');
+    newEvent.click();
+
+    whenReady(() => q('[id$="_SUBJECT"] input'), subject => {
+      const focusTitle = () => q('[id$="_SUBJECT"] input')?.focus();
+      const iso = targetDate();
+      // Re-query rather than reuse `subject`: setting the date makes React
+      // re-render the form, replacing the input node we started with.
+      if (iso) setStartDate(iso, focusTitle); else focusTitle();
+    });
+  }
+
+  // Enter in the title saves. Bound to the document rather than the input,
+  // because React swaps that node out whenever the form re-renders — a
+  // listener attached directly to it silently ends up on a detached
+  // element and never fires again.
+  function onComposeEnter(e) {
+    if (e.key !== 'Enter' || e.shiftKey) return;      // Shift+Enter stays a newline
+    if (!e.target || !e.target.closest) return;
+    if (!e.target.closest('[id$="_SUBJECT"]')) return;
+    const save = saveButton();
+    if (!save) return console.warn('[owa-minimal] quick add: no Save button');
+    e.preventDefault();
+    e.stopPropagation();
+    save.click();
+  }
+
+  // Single-key shortcuts. OWA's own bindings are all modifier-based —
+  // Alt+N, Alt+Shift+1..4, Ctrl+P — so plain letters are free, and those
+  // keep working because anything with a modifier is ignored below.
+  const SHORTCUTS = {
+    c: { quickAdd: true, title: 'Quick add' },
+    n: { ribbon: 2532, title: 'New event' },
+    d: { ribbon: 2504, title: 'Day' },
+    w: { ribbon: 2519, title: 'Week' },
+    m: { ribbon: 2505, title: 'Month' },
+    t: { nav: 0, title: 'Today' },
+    j: { nav: 2, title: 'Next' },        // vim: j moves forward
+    k: { nav: 1, title: 'Previous' },    // vim: k moves back
+  };
+
+  const isTyping = el => !!el && (
+    el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ||
+    el.tagName === 'SELECT' || el.isContentEditable);
+
+  // Two traps here. OWA keeps a zero-height dialog mounted at all times, so
+  // presence alone means nothing — only a laid-out one counts. And the event
+  // compose is *not* a role="dialog" at all, so without the compose check a
+  // stray `d` or `m` would switch the view behind an open form.
+  const overlayOpen = () => composeOpen()
+    || [...document.querySelectorAll('[role="dialog"]')].some(isVisible);
+
+  function onShortcut(e) {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;  // leave OWA's own bindings alone
+    if (isTyping(e.target) || overlayOpen()) return;
+    const binding = SHORTCUTS[e.key.toLowerCase()];
+    if (!binding) return;
+    if (binding.quickAdd) { e.preventDefault(); quickAdd(); return; }
+    const target = ('ribbon' in binding) ? findControl(binding) : navButton(binding.nav);
+    if (!target) {
+      console.warn('[owa-minimal] no control for', e.key, '→', binding.title);
+      return;
+    }
+    e.preventDefault();
+    target.click();
+  }
 
   // Elements carrying the full-day column height are found by their inline
   // height rather than by class, because OWA's class names are obfuscated
@@ -720,6 +861,10 @@
     e.preventDefault();
     setEnabled(!root.hasAttribute('data-owa-minimal'));
   });
+
+  // Capture phase, so a shortcut is never swallowed by a handler further in.
+  addEventListener('keydown', onShortcut, true);
+  addEventListener('keydown', onComposeEnter, true);
 
   addEventListener('resize', update);
 

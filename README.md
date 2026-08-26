@@ -60,9 +60,29 @@ Add the flag by hand to any URL to opt a regular tab in.
 
 | | |
 |---|---|
+| `☰` | collapsible sidebar — month picker and per-account calendar lists |
 | `New` `D` `W` `M` | new event, and day / week / month views |
 | `Alt+Shift+O` | toggle the full Outlook UI back, for anything the bar doesn't cover |
 | dot, bottom-right | same toggle, for when you've forgotten the shortcut |
+
+### Keyboard
+
+| key | |
+|---|---|
+| `c` | quick add — opens the compose ready to type, Enter saves |
+| `n` | new event (plain Outlook compose) |
+| `t` | today |
+| `d` / `w` / `m` | day / week / month view |
+| `j` / `k` | next / previous period (vim direction) |
+
+`c` is the fast path: it opens Outlook's compose, puts the event on the day
+you're looking at, and focuses the title. Type and press Enter — the event is
+saved without touching the mouse. Shift+Enter stays a newline. Everything else
+(attendees, recurrence, location) is still there if you Tab into it.
+
+Edit the `SHORTCUTS` map in the script to change them. Keys are ignored while
+typing in a field and while a dialog is open, and anything with a modifier is
+left alone — so OWA's own `Alt+N`, `Alt+Shift+1..4` and `Ctrl+P` still work.
 
 Click-drag on the grid still creates events at the right time, and invitations
 can still be accepted or declined — it's the real Outlook underneath, which is
@@ -75,7 +95,7 @@ Violentmonkey's script editor has a **Values** tab with:
 | key | default | |
 |---|---|---|
 | `hoursVisible` | `14` | hours on screen at once |
-| `startHour` | `7` | where the grid sits on load |
+| `startHour` | `6` | where the grid sits on load |
 | `themeUrl` | `http://127.0.0.1:8787/theme.json` | palette feed |
 | `themePollMs` | `3000` | how often to check it |
 
@@ -113,6 +133,18 @@ the app follow the theme's mode, but wrecks legibility against event category
 colours — which are deliberately left untouched. Set OWA's own Appearance to
 match your theme's mode instead. `INVERT_ON_MODE_MISMATCH` is there if you want
 to try it anyway.
+
+**Quick add drives the real compose.** Outlook's date row is a
+`<div role="button">`, not a field, so it can't be typed into — but clicking it
+expands into real inputs, which makes the whole form drivable in-page. Setting
+those needs the prototype's native value setter plus `input`/`change` events,
+because React ignores direct assignment. OWA always prefills *today* regardless
+of the week on screen, so the date is only overridden when today isn't among
+the visible `data-column-date` columns.
+
+**The Save button is the weakest selector in the project** — it has no id, only
+`aria-label="Save"`, which is translated. Quick add will not save on a
+non-English Outlook until that gains a fallback.
 
 **Expect selector drift.** Microsoft changes this UI regularly, and the hostname
 already moved from `outlook.office.com` to `outlook.cloud.microsoft` once during
