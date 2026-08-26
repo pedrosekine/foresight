@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.11.0
+// @version      3.12.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -261,6 +261,47 @@
     window.dispatchEvent(new Event('resize'));
   }
 
+  // Outlook packs three things into the same popover as the date and time
+  // fields — a time-zone button, All day / Recurring, and a Time suggestions
+  // list — and then sizes the popover to match its anchor, via an inline
+  // `--fui-match-target-size` taken from the date row. In the full compose
+  // that row is ~513px and everything fits. In the reduced box it is 264px
+  // while the content is 741, so the popover scrolled horizontally: tabbing
+  // to End time scrolled Start date out of sight.
+  //
+  // Two things fix it. Dropping everything that is not a field brings the
+  // content down to 519, and `width: max-content` in the CSS overrides the
+  // anchor match so it sizes to that instead of scrolling. The walk stops at
+  // the fields' common ancestor, or it would take their labels too.
+  function reducePicker() {
+    const pop = q('.fui-PopoverSurface');
+    if (!pop) return;
+    const fields = [...pop.querySelectorAll(PICKER)];
+    if (!fields.length) return;
+    let common = fields[0];
+    while (common && !fields.every(f => common.contains(f))) common = common.parentElement;
+    if (!common) return;
+
+    (function walk(el) {
+      for (const c of el.children) {
+        if (c === common) continue;
+        if (c.contains(common)) { walk(c); continue; }
+        c.setAttribute('data-owa-hide', '');
+      }
+    })(pop);
+
+    // Widening it is not enough on its own: the form's own scroll container
+    // is 360px with overflow-x hidden, and clips the popover back down.
+    const modal = pop.closest('[id^="ModalFocusTrapZone"]');
+    const stop = modal && modal.parentElement;
+    for (let n = pop.parentElement; n && n !== stop; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      if (!/^visible/.test(cs.overflowX) || !/^visible/.test(cs.overflowY)) {
+        n.setAttribute('data-owa-unclip', '');
+      }
+    }
+  }
+
   // Undo one untab. Needed because the picker's fields may already have
   // been through the pass above on an earlier render, before they were
   // recognised as keepers.
@@ -355,6 +396,7 @@
     }
 
     root.setAttribute('data-owa-quickadd', '');
+    reducePicker();
     nudgePicker();
     return true;
   }
@@ -362,7 +404,7 @@
   // Markers are cleared rather than left lying around, so `n` always gets
   // the full form even if it reuses nodes from a quick-add compose.
   const MARKERS = ['data-owa-hide', 'data-owa-fit', 'data-owa-savebar',
-                   'data-owa-savebtn', 'data-owa-shell'];
+                   'data-owa-savebtn', 'data-owa-shell', 'data-owa-unclip'];
 
   function unstripCompose() {
     nudged = null;
@@ -654,7 +696,17 @@
     html[data-owa-quickadd][data-owa-picker] [id^="ModalFocusTrapZone"] {
       max-width: 560px !important;
       min-width: 560px !important;
+      /* Room for the popover, which opens below the rows once it is wide
+         enough. At the normal 56px it lands on top of Save and hides the
+         End time field behind it. */
+      padding-bottom: 140px !important;
     }
+    /* Sizes to its content instead of to the date row it is anchored to. */
+    html[data-owa-quickadd] .fui-PopoverSurface {
+      width: max-content !important;
+      max-width: none !important;
+    }
+    html[data-owa-quickadd] [data-owa-unclip] { overflow: visible !important; }
     html[data-owa-quickadd] [data-owa-shell] {
       width: 100% !important;
       max-width: 100% !important;

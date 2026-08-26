@@ -198,6 +198,22 @@ because React ignores direct assignment. OWA always prefills *today* regardless
 of the week on screen, so the date is only overridden when today isn't among
 the visible `data-column-date` columns.
 
+**The picker is reduced too, and sized to its content.** Outlook packs a
+time-zone button, All day / Recurring and a five-row Time suggestions list into
+the same popover as the three fields, then sizes the popover to match its
+anchor — an inline `--fui-match-target-size` copied from the date row. In the
+full compose that row is ~513px and it all fits. In the reduced box the anchor
+is 264px while the content is 741, so the popover scrolled sideways: tabbing to
+End time scrolled Start date out of view. Dropping everything that is not a
+field brings it to 519, and `width: max-content` overrides the anchor match.
+The walk stops at the fields' common ancestor, or it takes their labels with it.
+
+Widening it is not enough on its own — the form's own scroll container is 360px
+with `overflow-x: hidden` and clips the popover straight back down, so whatever
+clips it gets marked `data-owa-unclip`. And once it is wide enough it opens
+*below* the rows rather than above them, landing on Save, which is what the
+extra `padding-bottom` while the picker is open is for.
+
 **Tab stops are whitelisted, not filtered.** Outlook leaves around fifty
 focusable controls in the compose, and focusing one inside the collapsed command
 bar visibly grows the box. Everything except the title and Save is given
