@@ -182,13 +182,18 @@ for a long time like a callout that refused to open, and it was nothing of the
 sort. Two separate faults, both ours:
 
 1. **The strip hid it.** `stripCompose` marks every sibling branch that leads to
-   neither the title nor the date row, and it re-runs on each render. The picker
-   mounts *inside* the modal as exactly such a branch, so it was marked
-   `display: none` within a frame of opening. Measured: fields present in the
-   DOM with the right values, `0 × 0`, `hiddenAncestor: data-owa-hide`. The fix
-   is that the picker counts as a keeper — and that the marking pass *clears*
-   the attribute as well as setting it, since a branch worth keeping can appear
-   after the branch was first judged.
+   neither the title nor the date row. The picker mounts *inside* the modal, in
+   a branch that pass had already hidden, so it was `display: none` from the
+   moment it appeared. Measured: fields present in the DOM with the right
+   values, `0 × 0`, hidden by us. The fix has two halves — the picker counts as
+   a keeper, and the marking pass *clears* the attribute as well as setting it,
+   since a branch can become worth keeping after it was first judged.
+
+   The half that was missed at first: **`stripCompose` runs once per compose**,
+   from `quickAdd`. Neither half of that fix does anything unless the strip runs
+   *again* once the picker exists, so `update()` re-runs it when a picker field
+   appears that has not been seen yet — one pass per opening, guarded on the
+   field's identity.
 2. **It opened off screen.** Fluent positions the popover with floating-ui
    against the geometry it measured on open — the *unreduced* form. The
    reduction then pulls the anchor hundreds of pixels up, and the popover stays

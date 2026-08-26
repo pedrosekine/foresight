@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.10.0
+// @version      3.10.1
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -624,9 +624,20 @@
       /* With the title-bar text gone the widest row is the date summary, so
          the box hugs that. The cap is only a backstop for locales whose
          date row runs longer. */
-      max-width: 440px !important;
+      max-width: 460px !important;
       position: relative !important;
       padding-bottom: 56px !important;
+    }
+    /* Fluent sizes the picker's date field to the box rather than to its
+       value, so in the reduced box it lands at 96px and truncates
+       "2026-08-26" to "2026-0…" — you cannot read the date you are
+       setting. Letting it size to its content costs nothing: the three
+       fields together come to ~374px, which still fits. */
+    html[data-owa-quickadd] .ms-DatePicker,
+    html[data-owa-quickadd] .ms-DatePicker .ms-TextField,
+    html[data-owa-quickadd] input[id^="DatePicker"] {
+      min-width: 128px !important;
+      width: auto !important;
     }
 
     /* Only Save survives the command bar, moved to the bottom right. The row
@@ -1043,6 +1054,16 @@
       if (quickAddActive && !composeOpen()) {
         quickAddActive = false;
         unstripCompose();
+      }
+      // The picker mounts into a branch the first strip already hid, so the
+      // strip has to run again once it appears: that pass is what clears the
+      // hide, puts its fields in the tab order, and nudges it back into
+      // view. Without it none of that ever fires, because stripCompose runs
+      // exactly once per compose. Guarded on the field's identity, so this
+      // is one pass per opening rather than one per frame.
+      if (quickAddActive && composeOpen()) {
+        const field = q('input[id^="DatePicker"]');
+        if (field && nudged !== field) stripCompose();
       }
       if (!root.hasAttribute('data-owa-minimal') || !inCalendar()) return;
       adoptToolbarTheme();
