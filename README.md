@@ -127,6 +127,34 @@ Edited values are kept forever. Untouched ones follow the code default, so a
 better default still reaches an existing install — the script records what it
 seeded and only replaces a value that still matches it.
 
+## Checking a change to quick add
+
+`verify-quickadd.js` derives the reduction from the bottom up rather than
+assuming it. Paste it into the console with a compose open:
+
+```js
+Q.candidates()      // every branch holding none of the essential nodes
+await Q.reduce()    // hide them one at a time, reverting anything that breaks
+await Q.size()      // apply the shipping widths
+await Q.verify()    // structure + open the picker + check it fits + close it
+Q.restore()
+```
+
+The checks are structural and never click Save, so running it creates no
+events. Run against Outlook's compose on 2026-08-26: **19 candidates, 0
+reverted**, and the resulting sizes matched what the script ships — 360px
+closed, 560px while the picker is open.
+
+That result is the useful part: the only things the box needs are the title
+bar (for close and pop-out), the title input, the date summary and Save.
+Everything else Outlook puts in the compose — the whole command bar, the
+attendee row, location, Teams, the body editor, Scheduler — can go without
+affecting any of them.
+
+Reach for this before changing the strip. Every bug in this feature so far came
+from reasoning about the DOM instead of measuring it, and the loop can't make
+that mistake: it only believes what it measures.
+
 ## How it works, and where it will break
 
 **Chrome removal** keys on `#OwaTitleBar`, `#LeftRail` and
