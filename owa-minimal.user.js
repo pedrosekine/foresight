@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.2.1
+// @version      3.3.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -415,11 +415,18 @@
   // Write our values into Outlook's callout, then save. The callout has to
   // be opened first because those inputs do not exist until it is.
   function commitAndSave() {
-    const row = dateRow();
     const fields = qaRow && qaRow._read && qaRow._read();
     const save = saveButton();
     if (!save) return console.warn('[owa-minimal] quick add: no Save button');
-    if (!row || !fields) return save.click();
+
+    // Restore Outlook's date row and blank the modal for the duration. The
+    // callout will not open while that row is hidden, moved off-screen or
+    // faded — it has to be laid out normally and on screen, which is why
+    // the modal is hidden instead of the row.
+    root.setAttribute('data-owa-committing', '');
+
+    const row = dateRow();
+    if (!row || !fields) { root.removeAttribute('data-owa-committing'); return save.click(); }
 
     pointerClick(row);
     whenReady(
@@ -456,6 +463,12 @@
         setTimeout(() => (saveButton() || save).click(), steps.length * 250 + 250);
       },
       30);
+
+    // If any of that stalls, put the box back rather than leaving an
+    // invisible modal on screen with no way to tell what happened.
+    setTimeout(() => {
+      if (composeOpen()) root.removeAttribute('data-owa-committing');
+    }, 4000);
   }
 
   // Reduce the compose to the title and date rows. Walks from the title up
@@ -545,6 +558,7 @@
 
   function unstripCompose() {
     root.removeAttribute('data-owa-quickadd');
+    root.removeAttribute('data-owa-committing');
     for (const attr of MARKERS) {
       for (const el of document.querySelectorAll(`[${attr}]`)) el.removeAttribute(attr);
     }
@@ -796,19 +810,20 @@
       z-index: 5 !important;
     }
 
-    /* Outlook's own date row is replaced by ours, but it has to keep a
-       layout box: the real fields only exist inside a callout that opens on
-       a pointer sequence, and that needs something on screen to open from. */
-    html[data-owa-quickadd] [data-owa-dtrow] {
-      position: absolute !important;
-      left: -10000px !important;
-      top: 0 !important;
-      width: 560px !important;
-      pointer-events: none !important;
+    /* Outlook's own date row is replaced by ours. It cannot merely be moved
+       away or faded out: its callout — the only place the real fields exist
+       — refuses to open unless the row is laid out normally and on screen.
+       So it is hidden outright here and put back for the instant of the
+       commit, with the whole modal blanked meanwhile so nothing flashes. */
+    html[data-owa-quickadd] [data-owa-dtrow] { display: none !important; }
+    html[data-owa-committing] [data-owa-dtrow] { display: flex !important; }
+    html[data-owa-committing] [id^="ModalFocusTrapZone"] {
+      opacity: 0 !important;
+      transition: none !important;
     }
 
     #omarchy-qa-row {
-      display: flex; align-items: center; gap: 8px;
+      display: flex; align-items: center; gap: 10px;
       margin: 4px 20px 0 52px; padding-bottom: 4px;
     }
     #omarchy-qa-row input {
@@ -823,8 +838,11 @@
       border-bottom-color: var(--owa-btn-fg, currentColor);
       border-bottom-width: 2px; padding-bottom: 5px;
     }
-    #omarchy-qa-row input[type="date"] { flex: 1 1 auto; }
-    #omarchy-qa-row input[type="time"] { flex: 0 0 auto; }
+    /* Sized explicitly: these are text inputs, so they would otherwise
+       take the browser's default ~20-character width and overflow the box. */
+    #omarchy-qa-row input[aria-label="date"]  { width: 6.5em; }
+    #omarchy-qa-row input[aria-label="start"],
+    #omarchy-qa-row input[aria-label="end"]   { width: 3.6em; }
     #omarchy-qa-row span { opacity: .5; }
 
     #omarchy-owa-toggle {

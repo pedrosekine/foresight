@@ -167,7 +167,10 @@ reaching the end time six presses instead of three.
 
 **Quick add uses its own date and time fields.** Outlook's real ones live in a
 callout that closes on any outside interaction, so they cannot be tabbed
-through; ours stand in and are written across on save. Three things that are
+through; ours stand in and are written across on save. That callout will not
+open unless Outlook's date row is laid out normally and on screen — hidden,
+moved off-screen or faded all stop it — so the row is hidden outright and put
+back for the instant of the commit, with the modal blanked meanwhile. Three things that are
 easy to get wrong there: the callout only opens on a full
 `pointerdown → mousedown → mouseup → click` (a bare `.click()` does nothing);
 Outlook's fields are comboboxes that commit a draft value only on Enter *while
