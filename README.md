@@ -75,15 +75,15 @@ Add the flag by hand to any URL to opt a regular tab in.
 | `d` / `w` / `m` | day / week / month view |
 | `j` / `k` | next / previous period (vim direction) |
 
-`c` is the fast path: it opens Outlook's compose stripped to **title, date,
-start and end**, with only Save left, and focuses the title. Tab moves title →
-date → start → end → Save; Enter saves from anywhere. Shift+Enter stays a
-newline.
+`c` is the fast path: it opens Outlook's compose stripped to **title, date/time
+and Save**, and focuses the title. Type and press Enter — saved. Tab moves
+title → date row → Save. To change the date, Tab to the date row and press
+Enter: that opens Outlook's own picker, which works reliably under a real key
+press or click.
 
-The date and time fields are plain text and take shorthand, 24-hour throughout:
-`1700`, `17`, `17:00` or `5pm` all give `17:00`; `16`, `16.9`, `16/09`, `1609`
-and `2026-09-16` all give a date, read day-first. Anything unparseable reverts
-to the last good value rather than saving something wrong.
+Own date and time fields are written and tabbable but disabled behind
+`QUICK_ADD_FIELDS`, because writing their values back into Outlook could not be
+made reliable — see below.
 
 `n` opens the same compose untouched, for when you need attendees, recurrence,
 a location or a body.
@@ -164,6 +164,15 @@ field hands focus to Save explicitly.
 **The fields are text, not `input[type=date|time]`.** The native ones split into
 `hh` / `mm` / `AM-PM` segments that are each their own tab stop, which made
 reaching the end time six presses instead of three.
+
+**Outlook's date fields cannot be driven reliably.** They live in a callout
+that only opens when its row is laid out normally and has been for a moment:
+hide the row, move it off-screen, fade it or collapse its height and the callout
+never opens, and a row that started hidden never opens at all. Even with the row
+restored and visible, the same pointer sequence opened it one moment and did
+nothing the next. Since a failed write saves silently at the wrong time rather
+than erroring, quick add keeps Outlook's own row instead. A real click or key
+press on it works every time; only synthetic ones are unreliable.
 
 **Quick add uses its own date and time fields.** Outlook's real ones live in a
 callout that closes on any outside interaction, so they cannot be tabbed

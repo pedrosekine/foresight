@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.3.1
+// @version      3.5.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -137,10 +137,23 @@
   // switch, change OWA's own Appearance setting to match your theme.
   const INVERT_ON_MODE_MISMATCH = false;
 
-  // Quick add uses its own date/time row instead of Outlook's, because
-  // Outlook's real fields only exist inside a callout that closes on any
-  // outside interaction — they cannot be tabbed through.
-  const QUICK_ADD_FIELDS = true;
+  // Own date/time fields for quick add — built, tabbable, and disabled.
+  //
+  // Writing their values back into Outlook is not reliable enough to ship.
+  // Its real fields live in a callout, and that callout only opens when its
+  // row is laid out normally and has been for a moment: hiding the row,
+  // moving it off-screen, fading it, or collapsing its height all stop it
+  // opening, and a row that started hidden never opens at all. Restoring
+  // the row first works — sometimes. The same pointer sequence on the same
+  // visible row opened it one moment and did nothing the next, with no
+  // difference I could find.
+  //
+  // An unreliable write here is the worst possible failure: it saves
+  // silently at the wrong time rather than erroring. So `c` keeps Outlook's
+  // own date row, which responds perfectly to a real click — Tab to it and
+  // press Enter to change the date. Everything else about the small box
+  // stays. See the README for the mechanisms that do work.
+  const QUICK_ADD_FIELDS = false;
 
   const q = s => document.querySelector(s);
 
@@ -414,29 +427,41 @@
 
   // Write our values into Outlook's callout, then save. The callout has to
   // be opened first because those inputs do not exist until it is.
+  // A second Enter while a commit is in flight starts a second chain and
+  // saves twice — which is what "I have to create the event twice" looked
+  // like from the outside.
+  let commitInFlight = false;
+
   function commitAndSave() {
+    if (commitInFlight) return;
     const fields = qaRow && qaRow._read && qaRow._read();
     const save = saveButton();
     if (!save) return console.warn('[owa-minimal] quick add: no Save button');
 
-    // Restore Outlook's date row and blank the modal for the duration. The
-    // callout will not open while that row is hidden, moved off-screen or
-    // faded — it has to be laid out normally and on screen, which is why
-    // the modal is hidden instead of the row.
+    commitInFlight = true;
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      commitInFlight = false;
+      root.removeAttribute('data-owa-committing');
+      (saveButton() || save).click();
+    };
+    // Whatever happens, the box is never left wedged with nothing saved.
+    setTimeout(done, 2500);
+
+    // Outlook's date row has to be laid out normally and on screen for its
+    // callout to open — hiding it, moving it off-screen and fading it all
+    // fail identically — so the row is restored and the modal blanked.
     root.setAttribute('data-owa-committing', '');
 
     const row = dateRow();
-    if (!row || !fields) { root.removeAttribute('data-owa-committing'); return save.click(); }
+    if (!row || !fields) return done();
 
-    // The callout closes on its own within about a third of a second, so
-    // each field is written under a fresh check that re-opens it if it has
-    // gone. Fixed delays looked fine in isolation and then wrote into
-    // nothing: by the third step the fields no longer existed.
     const pick = () => {
-      // Our own row must be excluded: a native date input reports exactly
-      // YYYY-MM-DD and a time input exactly HH:MM, so it matches the same
-      // test as Outlook's fields and wins on DOM order — which quietly
-      // commits our fields to themselves and leaves Outlook's untouched.
+      // Our own row must be excluded: a text field holding YYYY-MM-DD or
+      // HH:MM matches the same test as Outlook's fields and wins on DOM
+      // order, which quietly commits our fields to themselves.
       const ins = [...document.querySelectorAll('input')]
         .filter(isVisible)
         .filter(i => !i.closest('#omarchy-qa-row'));
@@ -445,39 +470,21 @@
       return (d && t.length >= 2) ? { d, t } : null;
     };
 
-    const withFields = (cb, tries = 20) => {
-      const found = pick();
-      if (found) return cb(found);
-      if (tries <= 0) return cb(null);
-      const anchor = dateRow();
-      if (anchor) pointerClick(anchor);
-      setTimeout(() => withFields(cb, tries - 1), 150);
-    };
-
-    // Start before end: moving the start drags the end along to keep the
-    // duration, so writing end first would be undone.
-    const plan = [
-      f => commitField(f.d, fields.date),
-      f => commitField(f.t[0], fields.start),
-      f => commitField(f.t[1], fields.end),
-    ];
-    const run = step => {
-      if (step >= plan.length) {
-        return setTimeout(() => (saveButton() || save).click(), 300);
-      }
-      withFields(found => {
-        if (found) plan[step](found);
-        else console.warn('[owa-minimal] quick add: date fields never appeared');
-        setTimeout(() => run(step + 1), 250);
-      });
-    };
-    run(0);
-
-    // If any of that stalls, put the box back rather than leaving an
-    // invisible modal on screen with no way to tell what happened.
-    setTimeout(() => {
-      if (composeOpen()) root.removeAttribute('data-owa-committing');
-    }, 4000);
+    pointerClick(row);
+    whenReady(pick, () => {
+      // All three writes go inside the third of a second the callout stays
+      // open. Spacing them further apart, or re-opening between each, ran
+      // past that window and wrote into nothing. Re-read every time:
+      // committing one field re-renders the row and replaces the others.
+      // Start before end, because moving the start drags the end along.
+      const writes = [
+        () => { const p = pick(); if (p) commitField(p.d, fields.date); },
+        () => { const p = pick(); if (p) commitField(p.t[0], fields.start); },
+        () => { const p = pick(); if (p) commitField(p.t[1], fields.end); },
+      ];
+      writes.forEach((write, i) => setTimeout(write, i * 60));
+      setTimeout(done, writes.length * 60 + 150);
+    }, 15);
   }
 
   // Reduce the compose to the title and date rows. Walks from the title up
@@ -548,7 +555,11 @@
     // Whitelisting is the only reliable way: Outlook leaves ~50 focusable
     // controls in the modal, and focusing one inside the collapsed command
     // bar visibly grows the box.
-    const keepFocusable = new Set([save, q('[id$="_SUBJECT"] input')].filter(Boolean));
+    // With our own fields off, Outlook's date row is the only way to change
+    // the date, so it stays in the tab order — Enter on it opens the picker.
+    const dateControl = QUICK_ADD_FIELDS ? null : dateRow();
+    const keepFocusable = new Set(
+      [save, q('[id$="_SUBJECT"] input'), dateControl].filter(Boolean));
     for (const el of modal.querySelectorAll(FOCUSABLE)) {
       if (keepFocusable.has(el) || el.closest('#omarchy-qa-row')) continue;
       if (el.tabIndex < 0) continue;
@@ -566,8 +577,10 @@
                    'data-owa-savebtn', 'data-owa-dtrow'];
 
   function unstripCompose() {
+    commitInFlight = false;
     root.removeAttribute('data-owa-quickadd');
     root.removeAttribute('data-owa-committing');
+    root.removeAttribute('data-owa-quickadd-pending');
     for (const attr of MARKERS) {
       for (const el of document.querySelectorAll(`[${attr}]`)) el.removeAttribute(attr);
     }
@@ -587,6 +600,13 @@
     if (!newEvent) return console.warn('[owa-minimal] quick add: no New event button');
     unstripCompose();
     quickAddActive = true;
+
+    // Blank the modal before it opens. Outlook paints its full form for a
+    // few frames before we can reduce it, which reads as a flash of the
+    // normal compose every time.
+    root.setAttribute('data-owa-quickadd-pending', '');
+    setTimeout(() => root.removeAttribute('data-owa-quickadd-pending'), 3000);
+
     newEvent.click();
 
     whenReady(() => q('[id$="_SUBJECT"] input'), () => {
@@ -604,6 +624,9 @@
       // Re-query rather than reuse the node we waited on: stripping makes
       // React re-render the form and replace it.
       q('[id$="_SUBJECT"] input')?.focus();
+      // One more frame so the reduced layout has settled before it shows.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => root.removeAttribute('data-owa-quickadd-pending')));
     });
   }
 
@@ -618,8 +641,14 @@
     // focus to be inside the modal looked safer but silently did nothing
     // whenever focus had drifted out, which Tab could cause on its own.
     if (!quickAddActive || !composeOpen()) return;
-    if (isTyping(e.target) && !e.target.closest('#omarchy-qa-row')
-        && !e.target.closest('[id^="ModalFocusTrapZone"]')) return;
+    // Only from the title, our own fields, or Save. Enter on Outlook's date
+    // row has to reach the row itself — that is what opens its picker, and
+    // hijacking it would leave no way to change the date.
+    const t = e.target;
+    const fromTitle = t && t.closest && t.closest('[id$="_SUBJECT"]');
+    const fromOurs = t && t.closest && t.closest('#omarchy-qa-row');
+    const fromSave = t && t.hasAttribute && t.hasAttribute('data-owa-savebtn');
+    if (!fromTitle && !fromOurs && !fromSave) return;
     e.preventDefault();
     e.stopPropagation();
     commitAndSave();
@@ -826,7 +855,12 @@
        commit, with the whole modal blanked meanwhile so nothing flashes. */
     html[data-owa-quickadd] [data-owa-dtrow] { display: none !important; }
     html[data-owa-committing] [data-owa-dtrow] { display: flex !important; }
-    html[data-owa-committing] [id^="ModalFocusTrapZone"] {
+
+    /* Blanked while committing, and again between opening the compose and
+       reducing it — otherwise Outlook's full form paints for a few frames
+       first and you see it flash before the small box replaces it. */
+    html[data-owa-committing] [id^="ModalFocusTrapZone"],
+    html[data-owa-quickadd-pending] [id^="ModalFocusTrapZone"] {
       opacity: 0 !important;
       transition: none !important;
     }
