@@ -80,13 +80,23 @@ and Save**, and focuses the title. Type and press Enter — saved.
 
 Tab cycles title → Save and back, and never leaves the box.
 
-**The date row is shown but not editable from the reduced box.** Outlook's date
-picker will not open while the box is reduced — see below. Use `n` for anything
-that is not at the slot shown.
+**To create an event somewhere other than now, select the slot first.** `c`
+inherits whatever the grid has selected, so the whole thing stays on the
+keyboard:
 
-Own date and time fields are written and tabbable but disabled behind
-`QUICK_ADD_FIELDS`, because writing their values back into Outlook could not be
-made reliable — see below.
+| | |
+|---|---|
+| `j` / `k` | move to the next / previous week |
+| arrow keys | move the selected slot — up/down by 30 minutes, left/right by a day |
+| `c` | compose at that slot |
+
+Then type the title and press Enter. This is Outlook's own selection machinery,
+which is why it is reliable — see the note below on what happened when the
+script tried to drive the date fields itself instead.
+
+The date row in the box is shown but **not** editable: Outlook's picker will not
+open there dependably enough to offer. `n` opens the full compose if you need
+the picker, attendees or recurrence.
 
 `n` opens the same compose untouched, for when you need attendees, recurrence,
 a location or a body.
@@ -159,43 +169,42 @@ the visible `data-column-date` columns.
 
 **Tab stops are whitelisted, not filtered.** Outlook leaves around fifty
 focusable controls in the compose, and focusing one inside the collapsed command
-bar visibly grows the box. Everything except the title, our three fields and
-Save is given `tabindex="-1"`. Note that Save sits *earlier* in the DOM than the
-form, so tabbing forward off the last field leaves the modal entirely — the end
-field hands focus to Save explicitly.
+bar visibly grows the box. Everything except the title and Save is given
+`tabindex="-1"`. Save sits *earlier* in the DOM than the form, so tabbing
+forward off the last stop would leave the modal entirely — Tab is handled
+explicitly and cycles within the box instead of relying on DOM order.
 
-**The fields are text, not `input[type=date|time]`.** The native ones split into
-`hh` / `mm` / `AM-PM` segments that are each their own tab stop, which made
-reaching the end time six presses instead of three.
+**Editing the date from the reduced box does not work, and the attempt was
+removed.** It is worth recording what was actually measured, because most of it
+contradicts the obvious guesses:
 
-**The reduced box and Outlook's date picker are mutually exclusive.** With the
-hidden rows set to `display: none`, the picker never opens — not by script, and
-not by a real mouse click either. Unset that one rule and it opens every time.
-It does not mount inside a hidden branch (its ancestors carry no marker), so the
-mechanism is still unexplained; the boundary is simply reproducible. Toggling
-the rule at the moment of opening did not work either.
+- It is *possible*. One clean run opened Outlook's callout in **995 ms**, wrote
+  a different date and both times through it, saved, and produced an event two
+  days away at the right time. So there is no hard block.
+- It is not *repeatable*. The identical sequence on the identical element fails
+  on other composes, with no difference that could be found — and a compose
+  that has already been focused or clicked seems especially likely to refuse.
+- Hiding the row first is fatal. With the row `display: none` and restored only
+  for the commit, the callout never opens. Restoring it earlier does not help.
+  This is what killed the own-fields design: those fields require the row to be
+  hidden, so they and the callout cannot coexist.
+- Lifting the *whole* reduction does let it open, but mounts the body editor,
+  scheduler and time suggestions at once and stalls the renderer for tens of
+  seconds — unusable.
+- A real mouse click and a real Enter on the focused row both failed too, so
+  this is not merely a synthetic-events problem.
 
-**Outlook's date fields cannot be driven reliably.** They live in a callout
-that only opens when its row is laid out normally and has been for a moment:
-hide the row, move it off-screen, fade it or collapse its height and the callout
-never opens, and a row that started hidden never opens at all. Even with the row
-restored and visible, the same pointer sequence opened it one moment and did
-nothing the next. Since a failed write saves silently at the wrong time rather
-than erroring, quick add keeps Outlook's own row instead. A real click or key
-press on it works every time; only synthetic ones are unreliable.
+The failure mode is what settles it: a write that does not land saves the event
+at Outlook's prefilled slot, silently and with no error. Guessing wrong about
+the date is worse than not offering the field. Hence `c` is for events at the
+slot it shows, and the grid or `n` for everything else.
 
-**Quick add uses its own date and time fields.** Outlook's real ones live in a
-callout that closes on any outside interaction, so they cannot be tabbed
-through; ours stand in and are written across on save. That callout will not
-open unless Outlook's date row is laid out normally and on screen — hidden,
-moved off-screen or faded all stop it — so the row is hidden outright and put
-back for the instant of the commit, with the modal blanked meanwhile. Three things that are
-easy to get wrong there: the callout only opens on a full
-`pointerdown → mousedown → mouseup → click` (a bare `.click()` does nothing);
-Outlook's fields are comboboxes that commit a draft value only on Enter *while
-focused*, so `reactSet` alone silently saves the old time; and when searching
-for those fields, our own row has to be excluded, because a native
-`input[type=date]` reports the same `YYYY-MM-DD` shape and wins on DOM order.
+Two findings from that work are worth keeping regardless. Outlook's callout
+fields are named by Fabric — `DatePicker<n>` and `ComboBox<n>-input` — which is
+locale-independent and far safer than matching a `YYYY-MM-DD` value shape, and
+they are comboboxes holding a *draft*: they commit only on Enter **while
+focused**, so setting `.value` alone leaves the field showing the new time while
+the form keeps the old one.
 
 **Save is found by Office toolbar metadata, not its label.** It has no id, but
 it is the only button in the compose carrying `priorityid="3"` /
