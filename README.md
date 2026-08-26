@@ -75,10 +75,13 @@ Add the flag by hand to any URL to opt a regular tab in.
 | `d` / `w` / `m` | day / week / month view |
 | `j` / `k` | next / previous period (vim direction) |
 
-`c` is the fast path: it opens Outlook's compose, puts the event on the day
-you're looking at, and focuses the title. Type and press Enter — the event is
-saved without touching the mouse. Shift+Enter stays a newline. Everything else
-(attendees, recurrence, location) is still there if you Tab into it.
+`c` is the fast path: it opens Outlook's compose stripped to **title, date,
+start and end**, with only Save left, and focuses the title. Tab moves title →
+date → start → end; Enter saves from anywhere in the box. Shift+Enter stays a
+newline.
+
+`n` opens the same compose untouched, for when you need attendees, recurrence,
+a location or a body.
 
 Edit the `SHORTCUTS` map in the script to change them. Keys are ignored while
 typing in a field and while a dialog is open, and anything with a modifier is
@@ -141,6 +144,24 @@ those needs the prototype's native value setter plus `input`/`change` events,
 because React ignores direct assignment. OWA always prefills *today* regardless
 of the week on screen, so the date is only overridden when today isn't among
 the visible `data-column-date` columns.
+
+**Quick add uses its own date and time fields.** Outlook's real ones live in a
+callout that closes on any outside interaction, so they cannot be tabbed
+through; ours stand in and are written across on save. Three things that are
+easy to get wrong there: the callout only opens on a full
+`pointerdown → mousedown → mouseup → click` (a bare `.click()` does nothing);
+Outlook's fields are comboboxes that commit a draft value only on Enter *while
+focused*, so `reactSet` alone silently saves the old time; and when searching
+for those fields, our own row has to be excluded, because a native
+`input[type=date]` reports the same `YYYY-MM-DD` shape and wins on DOM order.
+
+**Quick add strips the form by marking, not matching.** The rows it removes
+have no ids and vary in nesting depth, so it walks up from the title to
+`Form_Content` and marks every sibling branch leading to neither the title nor
+the date — which drops the calendar picker, attendees, location, Teams toggle,
+body editor and preview pane in one pass. The modal itself has no explicit
+height (it is sized by flex growth), so the same walk marks the chain to shrink
+it. Markers are cleared when the compose closes so `n` still gets the full form.
 
 **The Save button is the weakest selector in the project** — it has no id, only
 `aria-label="Save"`, which is translated. Quick add will not save on a
