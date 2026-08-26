@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.9.0
+// @version      3.10.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -305,6 +305,21 @@
       }
     }
 
+    // The title bar is what makes the box wide. Its text — "New event -
+    // Calendar - <your address>" — is the widest thing in the reduced form
+    // by a long way, and `width: auto` then sizes the whole modal to it,
+    // pushing the pop-out and close buttons far off to the right. Only the
+    // text goes; the button group stays, so it ends up beside the content
+    // instead of a paragraph away from it.
+    const header = modal && [...modal.children].find(c =>
+      !c.contains(form) && c.querySelector('button'));
+    if (header) {
+      for (const child of header.children) {
+        if (!child.querySelector('button') && !child.matches('button')
+            && (child.textContent || '').trim()) child.setAttribute('data-owa-hide', '');
+      }
+    }
+
     // Tab should reach the title, the date row and Save — nothing else.
     // Whitelisting is the only reliable way: Outlook leaves ~50 focusable
     // controls in the modal, and focusing one inside the collapsed command
@@ -333,7 +348,6 @@
   function unstripCompose() {
     nudged = null;
     root.removeAttribute('data-owa-quickadd');
-    root.removeAttribute('data-owa-committing');
     root.removeAttribute('data-owa-quickadd-pending');
     for (const attr of MARKERS) {
       for (const el of document.querySelectorAll(`[${attr}]`)) el.removeAttribute(attr);
@@ -607,7 +621,10 @@
     html[data-owa-quickadd] [id^="ModalFocusTrapZone"] {
       width: auto !important;
       min-width: 0 !important;
-      max-width: 520px !important;
+      /* With the title-bar text gone the widest row is the date summary, so
+         the box hugs that. The cap is only a backstop for locales whose
+         date row runs longer. */
+      max-width: 440px !important;
       position: relative !important;
       padding-bottom: 56px !important;
     }
@@ -625,20 +642,9 @@
       z-index: 5 !important;
     }
 
-    /* Outlook's own date row is replaced by ours, and hidden outright —
-       moving it away or fading it does not work, because its callout holds
-       the only real fields there are and needs the row laid out on screen.
-       It is put back for the instant of the commit, with the modal blanked
-       meanwhile so nothing flashes.
-
-       Only this row is restored, deliberately. Lifting the whole reduction
-       also works, but mounts the body editor, scheduler and time
-       suggestions at once and stalls the renderer for several seconds. */
-
-    /* Blanked while committing, and again between opening the compose and
-       reducing it — otherwise Outlook's full form paints for a few frames
-       first and you see it flash before the small box replaces it. */
-    html[data-owa-committing] [id^="ModalFocusTrapZone"],
+    /* Blanked between opening the compose and reducing it — otherwise
+       Outlook's full form paints for a few frames first and you see it
+       flash before the small box replaces it. */
     html[data-owa-quickadd-pending] [id^="ModalFocusTrapZone"] {
       opacity: 0 !important;
       transition: none !important;
@@ -1034,11 +1040,7 @@
     requestAnimationFrame(() => {
       queued = false;
       if (palette && document.styleSheets.length !== lastSheetCount) paint(false);
-      // Never tear down mid-commit: React re-renders the form while the
-      // values are being written, and composeOpen() reads false for a frame
-      // or two. Acting on that undid the strip, re-hid Outlook's date row
-      // and closed the callout before the values had landed.
-      if (quickAddActive && !composeOpen() && !root.hasAttribute('data-owa-committing')) {
+      if (quickAddActive && !composeOpen()) {
         quickAddActive = false;
         unstripCompose();
       }
