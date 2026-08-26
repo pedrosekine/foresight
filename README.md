@@ -76,10 +76,12 @@ Add the flag by hand to any URL to opt a regular tab in.
 | `j` / `k` | next / previous period (vim direction) |
 
 `c` is the fast path: it opens Outlook's compose stripped to **title, date/time
-and Save**, and focuses the title. Type and press Enter — saved. Tab moves
-title → date row → Save. To change the date, Tab to the date row and press
-Enter: that opens Outlook's own picker, which works reliably under a real key
-press or click.
+and Save**, and focuses the title. Type and press Enter — saved.
+
+Tab cycles title → date row → Save and back, and never leaves the box. To
+change the date or time, Tab to the date row and press Enter (or click it):
+Outlook's own picker opens, and Tab then moves between its date, start and end
+fields until you close it with Escape.
 
 Own date and time fields are written and tabbable but disabled behind
 `QUICK_ADD_FIELDS`, because writing their values back into Outlook could not be

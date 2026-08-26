@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.5.0
+// @version      3.6.2
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -634,6 +634,55 @@
   // because React swaps that node out whenever the form re-renders — a
   // listener attached directly to it silently ends up on a detached
   // element and never fires again.
+  // The tab stops of the quick-add box, in the order they should be walked.
+  // Save sits earlier in the DOM than the form, so relying on document order
+  // sends Tab out of the modal entirely once past the last field.
+  function quickAddStops() {
+    const stops = [q('[id$="_SUBJECT"] input')];
+    if (qaRow) stops.push(...qaRow.querySelectorAll('input'));
+    else stops.push(dateRow());
+    stops.push(saveButton());
+    return stops.filter(Boolean);
+  }
+
+  // Outlook's date picker is open when its own date/time inputs exist.
+  // The title is excluded as well as our own row: typing "15:00" as an
+  // event name would otherwise look exactly like an open picker.
+  const pickerOpen = () => [...document.querySelectorAll('input')]
+    .filter(isVisible)
+    .filter(i => !i.closest('#omarchy-qa-row') && !i.closest('[id$="_SUBJECT"]'))
+    .some(i => /^\d{4}-\d{2}-\d{2}$|^\d{1,2}:\d{2}$/.test(String(i.value || '')));
+
+  function onQuickAddTab(e) {
+    if (e.key !== 'Tab' || !quickAddActive || !composeOpen()) return;
+    // While the picker is open, Tab belongs to it — that is how you get
+    // from the date to the start and end times.
+    if (pickerOpen()) return;
+    const stops = quickAddStops();
+    if (!stops.length) return;
+    e.preventDefault();
+    const at = stops.indexOf(document.activeElement);
+    const next = e.shiftKey
+      ? stops[(at <= 0 ? stops.length : at) - 1]
+      : stops[(at + 1) % stops.length];
+    next.focus();
+  }
+
+  // Enter or Space on Outlook's date row opens its picker. Driven through
+  // the pointer sequence rather than left to Fluent's own key handling,
+  // which does not respond to a synthesised Enter. Reliable here because in
+  // this mode the row is never hidden — it has been laid out since the box
+  // opened, which is the condition the callout needs.
+  function onDateRowKey(e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (!quickAddActive || QUICK_ADD_FIELDS) return;
+    const row = dateRow();
+    if (!row || document.activeElement !== row) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pointerClick(row);
+  }
+
   function onComposeEnter(e) {
     if (e.key !== 'Enter' || e.shiftKey) return;      // Shift+Enter stays a newline
     // Enter saves from anywhere while the quick-add box is open — the
@@ -1363,6 +1412,10 @@
 
   // Capture phase, so a shortcut is never swallowed by a handler further in.
   addEventListener('keydown', onShortcut, true);
+  // Before onComposeEnter, so Enter on the date row opens the picker
+  // instead of saving.
+  addEventListener('keydown', onDateRowKey, true);
+  addEventListener('keydown', onQuickAddTab, true);
   addEventListener('keydown', onComposeEnter, true);
 
   addEventListener('resize', update);
