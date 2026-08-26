@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.10.1
+// @version      3.11.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -251,6 +251,10 @@
   let nudged = null;
   function nudgePicker() {
     const field = q('input[id^="DatePicker"]');
+    // The popover is absolutely positioned, so the box never grows to
+    // contain it — it just overflows the right edge by ~85px. Widening the
+    // box for as long as the picker is open is what keeps it inside.
+    root.toggleAttribute('data-owa-picker', !!field);
     if (!field) { nudged = null; return; }
     if (nudged === field) return;
     nudged = field;
@@ -305,18 +309,33 @@
       }
     }
 
-    // The title bar is what makes the box wide. Its text — "New event -
-    // Calendar - <your address>" — is the widest thing in the reduced form
-    // by a long way, and `width: auto` then sizes the whole modal to it,
-    // pushing the pop-out and close buttons far off to the right. Only the
-    // text goes; the button group stays, so it ends up beside the content
-    // instead of a paragraph away from it.
-    const header = modal && [...modal.children].find(c =>
-      !c.contains(form) && c.querySelector('button'));
-    if (header) {
-      for (const child of header.children) {
-        if (!child.querySelector('button') && !child.matches('button')
-            && (child.textContent || '').trim()) child.setAttribute('data-owa-hide', '');
+    // Outlook gives the compose shell an explicit pixel width — 1122px,
+    // measured for the full-size dialog — and capping the modal never
+    // reaches it. The result is a 460px box wrapped around content laid out
+    // for 1122: rows running off the edge, the close and pop-out buttons
+    // pushed far to the right, and a lot of unused space. Found by its
+    // position rather than its Griffel class name, which is generated.
+    const scroll = modal && [...modal.children].find(c => c.contains(form));
+    const shell = scroll && scroll.firstElementChild;
+    if (shell) shell.setAttribute('data-owa-shell', '');
+
+    // The date summary shares a flex row with the Scheduler block, which
+    // takes 147px of the 222px available and squeezes the date itself down
+    // to 58px — three lines tall and unreadable. Quick add has no use for
+    // it. Anything holding the picker is spared, in case it ever mounts
+    // in there.
+    const summary = dateControl();
+    if (summary) {
+      let node = summary;
+      while (node.parentElement && getComputedStyle(node.parentElement).display !== 'flex') {
+        node = node.parentElement;
+      }
+      const flexRow = node.parentElement;
+      if (flexRow) {
+        for (const sib of flexRow.children) {
+          if (sib === node || sib.querySelector(PICKER)) sib.removeAttribute('data-owa-hide');
+          else sib.setAttribute('data-owa-hide', '');
+        }
       }
     }
 
@@ -343,12 +362,13 @@
   // Markers are cleared rather than left lying around, so `n` always gets
   // the full form even if it reuses nodes from a quick-add compose.
   const MARKERS = ['data-owa-hide', 'data-owa-fit', 'data-owa-savebar',
-                   'data-owa-savebtn'];
+                   'data-owa-savebtn', 'data-owa-shell'];
 
   function unstripCompose() {
     nudged = null;
     root.removeAttribute('data-owa-quickadd');
     root.removeAttribute('data-owa-quickadd-pending');
+    root.removeAttribute('data-owa-picker');
     for (const attr of MARKERS) {
       for (const el of document.querySelectorAll(`[${attr}]`)) el.removeAttribute(attr);
     }
@@ -621,12 +641,24 @@
     html[data-owa-quickadd] [id^="ModalFocusTrapZone"] {
       width: auto !important;
       min-width: 0 !important;
-      /* With the title-bar text gone the widest row is the date summary, so
-         the box hugs that. The cap is only a backstop for locales whose
-         date row runs longer. */
-      max-width: 460px !important;
+      /* 360px is where the form's own content ends — measured. Anything
+         wider just adds a dead strip on the right: at 460 the form still
+         stops at 360 and leaves 100px of unused box beside it. */
+      max-width: 360px !important;
       position: relative !important;
       padding-bottom: 56px !important;
+    }
+    /* The picker needs far more room than the two rows do: 560px is where
+       its three fields stop crossing the right edge. Measured, and only
+       while it is open — the box springs back to 360 when it closes. */
+    html[data-owa-quickadd][data-owa-picker] [id^="ModalFocusTrapZone"] {
+      max-width: 560px !important;
+      min-width: 560px !important;
+    }
+    html[data-owa-quickadd] [data-owa-shell] {
+      width: 100% !important;
+      max-width: 100% !important;
+      min-width: 0 !important;
     }
     /* Fluent sizes the picker's date field to the box rather than to its
        value, so in the reduced box it lands at 96px and truncates
