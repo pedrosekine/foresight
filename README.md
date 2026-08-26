@@ -94,9 +94,12 @@ Then type the title and press Enter. This is Outlook's own selection machinery,
 which is why it is reliable — see the note below on what happened when the
 script tried to drive the date fields itself instead.
 
-The date row in the box is shown but **not** editable: Outlook's picker will not
-open there dependably enough to offer. `n` opens the full compose if you need
-the picker, attendees or recurrence.
+**The date row is editable.** Tab to it and press Enter (or click it) and
+Outlook's own picker opens with start date, start time and end time. Tab walks
+title → date row → those three → Save, and never leaves the box; typing a value
+and tabbing on commits it. Enter from the title or Save files the event.
+
+`n` opens the full compose if you need attendees, recurrence or a body.
 
 `n` opens the same compose untouched, for when you need attendees, recurrence,
 a location or a body.
@@ -174,37 +177,34 @@ bar visibly grows the box. Everything except the title and Save is given
 forward off the last stop would leave the modal entirely — Tab is handled
 explicitly and cycles within the box instead of relying on DOM order.
 
-**Editing the date from the reduced box does not work, and the attempt was
-removed.** It is worth recording what was actually measured, because most of it
-contradicts the obvious guesses:
+**The picker was always opening — twice over, we were hiding it.** This looked
+for a long time like a callout that refused to open, and it was nothing of the
+sort. Two separate faults, both ours:
 
-- It is *possible*. One clean run opened Outlook's callout in **995 ms**, wrote
-  a different date and both times through it, saved, and produced an event two
-  days away at the right time. So there is no hard block.
-- It is not *repeatable*. The identical sequence on the identical element fails
-  on other composes, with no difference that could be found — and a compose
-  that has already been focused or clicked seems especially likely to refuse.
-- Hiding the row first is fatal. With the row `display: none` and restored only
-  for the commit, the callout never opens. Restoring it earlier does not help.
-  This is what killed the own-fields design: those fields require the row to be
-  hidden, so they and the callout cannot coexist.
-- Lifting the *whole* reduction does let it open, but mounts the body editor,
-  scheduler and time suggestions at once and stalls the renderer for tens of
-  seconds — unusable.
-- A real mouse click and a real Enter on the focused row both failed too, so
-  this is not merely a synthetic-events problem.
+1. **The strip hid it.** `stripCompose` marks every sibling branch that leads to
+   neither the title nor the date row, and it re-runs on each render. The picker
+   mounts *inside* the modal as exactly such a branch, so it was marked
+   `display: none` within a frame of opening. Measured: fields present in the
+   DOM with the right values, `0 × 0`, `hiddenAncestor: data-owa-hide`. The fix
+   is that the picker counts as a keeper — and that the marking pass *clears*
+   the attribute as well as setting it, since a branch worth keeping can appear
+   after the branch was first judged.
+2. **It opened off screen.** Fluent positions the popover with floating-ui
+   against the geometry it measured on open — the *unreduced* form. The
+   reduction then pulls the anchor hundreds of pixels up, and the popover stays
+   put: measured at `y = 1003` in a 756px viewport, below the modal entirely.
+   floating-ui recomputes on resize, so one synthetic `resize` event moves it to
+   `y = 404`, inside the box. That is the whole fix.
 
-The failure mode is what settles it: a write that does not land saves the event
-at Outlook's prefilled slot, silently and with no error. Guessing wrong about
-the date is worse than not offering the field. Hence `c` is for events at the
-slot it shows, and the grid or `n` for everything else.
+The lesson worth keeping: **check existence separately from visibility.** Every
+probe here filtered on `height > 0`, which reports "not open" for a thing that
+is open, correct and merely hidden by the caller. That one conflation cost
+several rounds and produced two confident, wrong conclusions.
 
-Two findings from that work are worth keeping regardless. Outlook's callout
-fields are named by Fabric — `DatePicker<n>` and `ComboBox<n>-input` — which is
-locale-independent and far safer than matching a `YYYY-MM-DD` value shape, and
-they are comboboxes holding a *draft*: they commit only on Enter **while
-focused**, so setting `.value` alone leaves the field showing the new time while
-the form keeps the old one.
+Its fields are named by Fabric — `DatePicker<n>` and `ComboBox<n>-input` — which
+is locale-independent and safer than matching a `YYYY-MM-DD` value shape. They
+are comboboxes holding a *draft*: moving focus away commits it (which is what
+makes Tab work), and so does Enter, which also closes the popover.
 
 **Save is found by Office toolbar metadata, not its label.** It has no id, but
 it is the only button in the compose carrying `priorityid="3"` /

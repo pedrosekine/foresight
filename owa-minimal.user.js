@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.8.0
+// @version      3.9.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -227,9 +227,45 @@
   // depending on how deeply any of them happen to be nested.
   const FOCUSABLE = 'a[href],button,input,select,textarea,[tabindex],[contenteditable="true"]';
 
-  const KEEP_ROWS = ['[id$="_SUBJECT"]', '[id$="_DATETIME"]'];
+  // Outlook's date picker mounts *inside* the modal, as a fresh branch off
+  // the date row — not in a portal at body level. So it has to count as a
+  // keeper, or the strip below hides it within a frame of it opening, and
+  // the untab pass takes its fields out of the tab order. That is what made
+  // the picker look like it never opened: it did, and we removed it.
+  const PICKER = 'input[id^="DatePicker"], input.ms-ComboBox-Input';
+  const KEEP_ROWS = ['[id$="_SUBJECT"]', '[id$="_DATETIME"]', PICKER];
   const leadsToKeeper = el =>
     KEEP_ROWS.some(k => (el.matches && el.matches(k)) || (el.querySelector && el.querySelector(k)));
+
+  // Fluent places the picker with floating-ui, against the geometry it
+  // measured when the popover opened — which is the *unreduced* form. The
+  // reduction then pulls the anchor hundreds of pixels up and the popover
+  // stays where it was, landing below the modal, off screen. It is not
+  // clipped and not small; it is simply parked somewhere you cannot see.
+  //
+  // floating-ui recomputes on resize, so one synthetic resize is the whole
+  // fix: measured moving it from y=1003 to y=404 inside a 756px viewport.
+  // Guarded by identity rather than a boolean, because the picker is a
+  // fresh node each time it opens and the strip runs on every render — an
+  // unguarded nudge would resize on a loop.
+  let nudged = null;
+  function nudgePicker() {
+    const field = q('input[id^="DatePicker"]');
+    if (!field) { nudged = null; return; }
+    if (nudged === field) return;
+    nudged = field;
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  // Undo one untab. Needed because the picker's fields may already have
+  // been through the pass above on an earlier render, before they were
+  // recognised as keepers.
+  function restoreTab(el) {
+    if (!el.hasAttribute('data-owa-untab')) return;
+    const prev = el.getAttribute('data-owa-untab');
+    if (prev === '') el.removeAttribute('tabindex'); else el.setAttribute('tabindex', prev);
+    el.removeAttribute('data-owa-untab');
+  }
 
   function stripCompose() {
     const subject = q('[id$="_SUBJECT"]');
@@ -238,7 +274,11 @@
 
     for (let node = subject; node && node !== form; node = node.parentElement) {
       for (const sib of node.parentElement.children) {
-        if (!leadsToKeeper(sib)) sib.setAttribute('data-owa-hide', '');
+        // Set *and* clear: a branch that had nothing worth keeping can
+        // acquire some later, which is exactly what the picker does when it
+        // mounts. Marking only in one direction leaves it hidden forever.
+        if (leadsToKeeper(sib)) sib.removeAttribute('data-owa-hide');
+        else sib.setAttribute('data-owa-hide', '');
       }
     }
 
@@ -269,15 +309,19 @@
     // Whitelisting is the only reliable way: Outlook leaves ~50 focusable
     // controls in the modal, and focusing one inside the collapsed command
     // bar visibly grows the box.
-    const keepFocusable = new Set([save, q('[id$="_SUBJECT"] input')].filter(Boolean));
+    const keepFocusable = new Set([
+      save, q('[id$="_SUBJECT"] input'), dateControl(),
+      ...modal.querySelectorAll(PICKER),
+    ].filter(Boolean));
     for (const el of modal.querySelectorAll(FOCUSABLE)) {
-      if (keepFocusable.has(el)) continue;
+      if (keepFocusable.has(el)) { restoreTab(el); continue; }
       if (el.tabIndex < 0) continue;
       el.setAttribute('data-owa-untab', el.getAttribute('tabindex') ?? '');
       el.tabIndex = -1;
     }
 
     root.setAttribute('data-owa-quickadd', '');
+    nudgePicker();
     return true;
   }
 
@@ -287,6 +331,7 @@
                    'data-owa-savebtn'];
 
   function unstripCompose() {
+    nudged = null;
     root.removeAttribute('data-owa-quickadd');
     root.removeAttribute('data-owa-committing');
     root.removeAttribute('data-owa-quickadd-pending');
@@ -335,25 +380,22 @@
   // Save sits earlier in the DOM than the form, so relying on document order
   // sends Tab out of the modal entirely once past the last field.
   function quickAddStops() {
-    // Outlook's date row is deliberately not a stop: in the reduced box it
-    // cannot be opened, so focusing it would offer a control that does
-    // nothing. It stays visible, because the slot still has to be readable.
-    const stops = [q('[id$="_SUBJECT"] input'), saveButton()];
+    const picker = [...document.querySelectorAll(PICKER)].filter(isVisible);
+    // While the picker is open its own fields are the middle of the walk:
+    // title → date → start → end → Save. Closed, it collapses to two stops.
+    const stops = [q('[id$="_SUBJECT"] input'), dateControl(), ...picker, saveButton()];
     return stops.filter(Boolean);
   }
 
-  // Outlook's picker is open when its own fields exist. Fabric names them
-  // itself — DatePicker<n> — which is locale-independent and, unlike
-  // matching on a YYYY-MM-DD value, cannot be confused with an event
-  // titled "2026-08-26" or with our own row.
-  const pickerOpen = () =>
-    [...document.querySelectorAll('input[id^="DatePicker"]')].some(isVisible);
+  // Outlook's date summary row — the thing that opens the picker.
+  const dateControl = () => {
+    const dt = q('[id$="_DATETIME"]');
+    return dt && [...dt.querySelectorAll('[role="button"]')]
+      .find(b => /\d{4}-\d{2}-\d{2}/.test((b.textContent || '').trim()));
+  };
 
   function onQuickAddTab(e) {
     if (e.key !== 'Tab' || !quickAddActive || !composeOpen()) return;
-    // While the picker is open, Tab belongs to it — that is how you get
-    // from the date to the start and end times.
-    if (pickerOpen()) return;
     const stops = quickAddStops();
     if (!stops.length) return;
     e.preventDefault();
@@ -557,6 +599,10 @@
       height: auto !important;
       min-height: 0 !important;
       flex-grow: 0 !important;
+      /* The picker renders inline, inside this chain. Without this it can
+         open into a box that has already been shrunk around the two rows
+         and be clipped to nothing — visually identical to never opening. */
+      overflow: visible !important;
     }
     html[data-owa-quickadd] [id^="ModalFocusTrapZone"] {
       width: auto !important;
