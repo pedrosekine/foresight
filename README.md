@@ -77,8 +77,13 @@ Add the flag by hand to any URL to opt a regular tab in.
 
 `c` is the fast path: it opens Outlook's compose stripped to **title, date,
 start and end**, with only Save left, and focuses the title. Tab moves title →
-date → start → end; Enter saves from anywhere in the box. Shift+Enter stays a
+date → start → end → Save; Enter saves from anywhere. Shift+Enter stays a
 newline.
+
+The date and time fields are plain text and take shorthand, 24-hour throughout:
+`1700`, `17`, `17:00` or `5pm` all give `17:00`; `16`, `16.9`, `16/09`, `1609`
+and `2026-09-16` all give a date, read day-first. Anything unparseable reverts
+to the last good value rather than saving something wrong.
 
 `n` opens the same compose untouched, for when you need attendees, recurrence,
 a location or a body.
@@ -148,6 +153,17 @@ those needs the prototype's native value setter plus `input`/`change` events,
 because React ignores direct assignment. OWA always prefills *today* regardless
 of the week on screen, so the date is only overridden when today isn't among
 the visible `data-column-date` columns.
+
+**Tab stops are whitelisted, not filtered.** Outlook leaves around fifty
+focusable controls in the compose, and focusing one inside the collapsed command
+bar visibly grows the box. Everything except the title, our three fields and
+Save is given `tabindex="-1"`. Note that Save sits *earlier* in the DOM than the
+form, so tabbing forward off the last field leaves the modal entirely — the end
+field hands focus to Save explicitly.
+
+**The fields are text, not `input[type=date|time]`.** The native ones split into
+`hh` / `mm` / `AM-PM` segments that are each their own tab stop, which made
+reaching the end time six presses instead of three.
 
 **Quick add uses its own date and time fields.** Outlook's real ones live in a
 callout that closes on any outside interaction, so they cannot be tabbed

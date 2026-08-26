@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.1.0
+// @version      3.2.1
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -300,34 +300,114 @@
   // closes the moment anything else is touched, so they can't be tabbed
   // through — these stand in for them and are written across on save.
   // Native date/time inputs bring a picker and keyboard entry for free.
+  const pad = n => String(n).padStart(2, '0');
+  const toMinutes = hhmm => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+  const fromMinutes = total => `${pad(Math.floor((total % 1440) / 60))}:${pad(total % 60)}`;
+
+  // 24-hour, and forgiving: "1700", "17", "17:00", "5pm", "5.30pm".
+  function parseTime(raw) {
+    const s = String(raw).trim().toLowerCase();
+    if (!s) return null;
+    const pm = s.includes('p'), am = s.includes('a');
+    const digits = s.replace(/\D/g, '');
+    if (!digits) return null;
+    let h, m;
+    if (/[:.]/.test(s)) {
+      const [a, b] = s.split(/[:.]/);
+      h = Number(a.replace(/\D/g, ''));
+      m = Number((b || '0').replace(/\D/g, '') || 0);
+    } else if (digits.length <= 2) {
+      h = Number(digits); m = 0;
+    } else {
+      h = Number(digits.slice(0, digits.length - 2));
+      m = Number(digits.slice(-2));
+    }
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+    if (pm && h < 12) h += 12;
+    if (am && h === 12) h = 0;
+    if (h > 23 || m > 59) return null;
+    return `${pad(h)}:${pad(m)}`;
+  }
+
+  // Day-first, matching how dates are written here: "16", "16.9", "16/09",
+  // "16.09.2026", "1609", and full ISO. Missing parts come from the day the
+  // box opened on.
+  function parseDate(raw, baseISO) {
+    const s = String(raw).trim();
+    if (!s) return null;
+    const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+    if (iso) return `${iso[1]}-${pad(+iso[2])}-${pad(+iso[3])}`;
+
+    const [by, bm] = baseISO.split('-').map(Number);
+    const digits = s.replace(/\D/g, '');
+    let parts = s.split(/\D+/).filter(Boolean).map(Number);
+    if (parts.length === 1 && digits.length === 4) {
+      parts = [+digits.slice(0, 2), +digits.slice(2)];   // DDMM
+    }
+    const [d, mo, y] = parts;
+    const year = y ? (y < 100 ? 2000 + y : y) : by;
+    const month = mo || bm;
+    if (!(d >= 1 && d <= 31) || !(month >= 1 && month <= 12)) return null;
+    return `${year}-${pad(month)}-${pad(d)}`;
+  }
+
   let qaRow = null;
 
   function buildFields() {
     const slot = currentSlot();
-    const target = targetDate();
+    const good = { date: targetDate() || slot.date, start: slot.start, end: slot.end };
+
     qaRow = document.createElement('div');
     qaRow.id = 'omarchy-qa-row';
-    const field = (type, value) => {
-      const i = document.createElement('input');
-      i.type = type;
-      i.value = value;
-      return i;
+
+    // Plain text, not input[type=date|time]: the native ones split into
+    // hh / mm / AM-PM segments that are each their own tab stop, so
+    // reaching the end time takes six presses instead of three.
+    const make = (key, parse, after) => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = good[key];
+      input.spellcheck = false;
+      input.autocomplete = 'off';
+      input.setAttribute('aria-label', key);
+      const commit = () => {
+        const parsed = parse(input.value);
+        if (parsed) { const prev = good[key]; good[key] = parsed; if (after) after(prev); }
+        input.value = good[key];      // unparseable input reverts, never saves junk
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', e => { if (e.key === 'Tab') commit(); });
+      return input;
     };
-    const date = field('date', target || slot.date);
-    const start = field('time', slot.start);
-    const end = field('time', slot.end);
+
+    // Moving the start drags the end along, keeping the duration.
+    const date = make('date', v => parseDate(v, good.date));
+    const start = make('start', parseTime, prev => {
+      const span = toMinutes(good.end) - toMinutes(prev);
+      good.end = fromMinutes(toMinutes(good.start) + (span > 0 ? span : 30));
+      if (qaRow._fields) qaRow._fields.end.value = good.end;
+    });
+    const end = make('end', parseTime);
+
+    // Save lives earlier in the DOM than the form, so tabbing forward off
+    // the end field runs out of the modal entirely and lands on <body>.
+    // Hand focus over explicitly to close the loop: end → Save → Enter.
+    end.addEventListener('keydown', e => {
+      if (e.key !== 'Tab' || e.shiftKey) return;
+      const save = saveButton();
+      if (!save) return;
+      e.preventDefault();
+      save.focus();
+    });
+
     const dash = document.createElement('span');
     dash.textContent = '–';
     qaRow.append(date, start, dash, end);
     qaRow._fields = { date, start, end };
-
-    // Keeping the end time the same length as the start when the start
-    // moves, which is what you'd expect when nudging an event earlier.
-    start.addEventListener('change', () => {
-      const mins = s => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
-      const delta = mins(end.value) - mins(slot.start);
-      const total = (mins(start.value) + (delta > 0 ? delta : 30)) % 1440;
-      end.value = `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+    qaRow._read = () => ({
+      date: parseDate(date.value, good.date) || good.date,
+      start: parseTime(start.value) || good.start,
+      end: parseTime(end.value) || good.end,
     });
     return qaRow;
   }
@@ -336,7 +416,7 @@
   // be opened first because those inputs do not exist until it is.
   function commitAndSave() {
     const row = dateRow();
-    const fields = qaRow && qaRow._fields;
+    const fields = qaRow && qaRow._read && qaRow._read();
     const save = saveButton();
     if (!save) return console.warn('[owa-minimal] quick add: no Save button');
     if (!row || !fields) return save.click();
@@ -368,9 +448,9 @@
           };
         };
         const steps = [
-          () => { const p = pick(); if (p.d) commitField(p.d, fields.date.value); },
-          () => { const p = pick(); if (p.t[0]) commitField(p.t[0], fields.start.value); },
-          () => { const p = pick(); if (p.t[1]) commitField(p.t[1], fields.end.value); },
+          () => { const p = pick(); if (p.d) commitField(p.d, fields.date); },
+          () => { const p = pick(); if (p.t[0]) commitField(p.t[0], fields.start); },
+          () => { const p = pick(); if (p.t[1]) commitField(p.t[1], fields.end); },
         ];
         steps.forEach((step, i) => setTimeout(step, i * 250));
         setTimeout(() => (saveButton() || save).click(), steps.length * 250 + 250);
@@ -383,6 +463,14 @@
   // keeper — which takes out the calendar picker, attendees, location, the
   // Teams toggle, the body editor and the preview pane in one pass, without
   // depending on how deeply any of them happen to be nested.
+  const FOCUSABLE = 'a[href],button,input,select,textarea,[tabindex],[contenteditable="true"]';
+
+  const commonAncestor = (a, b) => {
+    const chain = el => { const out = []; for (let n = el; n; n = n.parentElement) out.push(n); return out; };
+    const set = new Set(chain(b));
+    return chain(a).find(n => set.has(n));
+  };
+
   const KEEP_ROWS = ['[id$="_SUBJECT"]', '[id$="_DATETIME"]'];
   const leadsToKeeper = el =>
     KEEP_ROWS.some(k => (el.matches && el.matches(k)) || (el.querySelector && el.querySelector(k)));
@@ -413,8 +501,11 @@
       let bar = save;
       while (bar.parentElement && bar.parentElement !== form.parentElement) bar = bar.parentElement;
       bar.setAttribute('data-owa-savebar', '');
-      for (const child of bar.children) {
-        if (!child.contains(save)) child.setAttribute('data-owa-hide', '');
+      // Every control in the bar, not just its direct children: Save shares
+      // a group with Event/Series/Busy and the rest, so hiding one level
+      // down leaves them all on screen and in the tab order.
+      for (const el of bar.querySelectorAll('button, [role="button"]')) {
+        if (el !== save && !el.contains(save)) el.setAttribute('data-owa-hide', '');
       }
     }
 
@@ -423,17 +514,24 @@
     // callout and that needs a layout box — and made untabbable, since an
     // off-screen row still sits in the tab order otherwise.
     if (QUICK_ADD_FIELDS) {
+      // The whole row, not just the _DATETIME element — its wrapper carries
+      // the clock icon, which otherwise stays behind on its own.
       const dt = q('[id$="_DATETIME"]');
-      const row = dt && dt.closest('div');
-      if (row) {
-        row.setAttribute('data-owa-dtrow', '');
-        for (const el of [row, ...row.querySelectorAll('*')]) {
-          if (el.tabIndex >= 0) {
-            el.setAttribute('data-owa-untab', el.getAttribute('tabindex') ?? '');
-            el.tabIndex = -1;
-          }
-        }
-      }
+      const rowContainer = dt && subject && commonAncestor(subject, dt);
+      const row = rowContainer && [...rowContainer.children].find(c => c.contains(dt));
+      if (row) row.setAttribute('data-owa-dtrow', '');
+    }
+
+    // Tab should reach the title, our three fields and Save — nothing else.
+    // Whitelisting is the only reliable way: Outlook leaves ~50 focusable
+    // controls in the modal, and focusing one inside the collapsed command
+    // bar visibly grows the box.
+    const keepFocusable = new Set([save, q('[id$="_SUBJECT"] input')].filter(Boolean));
+    for (const el of modal.querySelectorAll(FOCUSABLE)) {
+      if (keepFocusable.has(el) || el.closest('#omarchy-qa-row')) continue;
+      if (el.tabIndex < 0) continue;
+      el.setAttribute('data-owa-untab', el.getAttribute('tabindex') ?? '');
+      el.tabIndex = -1;
     }
 
     root.setAttribute('data-owa-quickadd', '');
@@ -476,9 +574,7 @@
       if (QUICK_ADD_FIELDS) {
         const subject = q('[id$="_SUBJECT"]');
         const dt = q('[id$="_DATETIME"]');
-        const chain = el => { const a = []; for (let n = el; n; n = n.parentElement) a.push(n); return a; };
-        const dtChain = new Set(chain(dt));
-        const container = chain(subject).find(n => dtChain.has(n));
+        const container = subject && dt && commonAncestor(subject, dt);
         const subjectRow = container && [...container.children].find(c => c.contains(subject));
         if (subjectRow) subjectRow.after(buildFields());
       }
@@ -494,12 +590,13 @@
   // element and never fires again.
   function onComposeEnter(e) {
     if (e.key !== 'Enter' || e.shiftKey) return;      // Shift+Enter stays a newline
-    if (!quickAddActive || !e.target || !e.target.closest) return;
-    // Enter saves from anywhere in the quick-add box — the title, any of
-    // our fields, or the Save button once tabbed to.
-    const inQuickAdd = e.target.closest('#omarchy-qa-row')
-      || e.target.closest('[id^="ModalFocusTrapZone"]');
-    if (!inQuickAdd) return;
+    // Enter saves from anywhere while the quick-add box is open — the
+    // title, any field, Save itself, or nowhere in particular. Requiring
+    // focus to be inside the modal looked safer but silently did nothing
+    // whenever focus had drifted out, which Tab could cause on its own.
+    if (!quickAddActive || !composeOpen()) return;
+    if (isTyping(e.target) && !e.target.closest('#omarchy-qa-row')
+        && !e.target.closest('[id^="ModalFocusTrapZone"]')) return;
     e.preventDefault();
     e.stopPropagation();
     commitAndSave();
