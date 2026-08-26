@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.3.0
+// @version      3.3.1
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -428,41 +428,50 @@
     const row = dateRow();
     if (!row || !fields) { root.removeAttribute('data-owa-committing'); return save.click(); }
 
-    pointerClick(row);
-    whenReady(
-      () => {
-        const inputs = [...document.querySelectorAll('input')].filter(isVisible);
-        const d = inputs.find(i => /^\d{4}-\d{2}-\d{2}$/.test(String(i.value || '')));
-        const t = inputs.filter(i => /^\d{1,2}:\d{2}$/.test(String(i.value || '')));
-        return (d && t.length >= 2) ? { d, start: t[0], end: t[1] } : null;
-      },
-      () => {
-        // Re-read between each: committing one field re-renders the row and
-        // replaces the other inputs. Start goes before end because setting
-        // the start drags the end along to keep the duration.
-        const pick = () => {
-          // Our own row must be excluded: a native <input type="date">
-          // reports exactly YYYY-MM-DD and type="time" exactly HH:MM, so it
-          // matches the same test as Outlook's fields — and being earlier in
-          // the DOM, it wins. That silently commits our fields to themselves
-          // and leaves Outlook's untouched, saving at the original time.
-          const ins = [...document.querySelectorAll('input')]
-            .filter(isVisible)
-            .filter(i => !i.closest('#omarchy-qa-row'));
-          return {
-            d: ins.find(i => /^\d{4}-\d{2}-\d{2}$/.test(String(i.value || ''))),
-            t: ins.filter(i => /^\d{1,2}:\d{2}$/.test(String(i.value || ''))),
-          };
-        };
-        const steps = [
-          () => { const p = pick(); if (p.d) commitField(p.d, fields.date); },
-          () => { const p = pick(); if (p.t[0]) commitField(p.t[0], fields.start); },
-          () => { const p = pick(); if (p.t[1]) commitField(p.t[1], fields.end); },
-        ];
-        steps.forEach((step, i) => setTimeout(step, i * 250));
-        setTimeout(() => (saveButton() || save).click(), steps.length * 250 + 250);
-      },
-      30);
+    // The callout closes on its own within about a third of a second, so
+    // each field is written under a fresh check that re-opens it if it has
+    // gone. Fixed delays looked fine in isolation and then wrote into
+    // nothing: by the third step the fields no longer existed.
+    const pick = () => {
+      // Our own row must be excluded: a native date input reports exactly
+      // YYYY-MM-DD and a time input exactly HH:MM, so it matches the same
+      // test as Outlook's fields and wins on DOM order — which quietly
+      // commits our fields to themselves and leaves Outlook's untouched.
+      const ins = [...document.querySelectorAll('input')]
+        .filter(isVisible)
+        .filter(i => !i.closest('#omarchy-qa-row'));
+      const d = ins.find(i => /^\d{4}-\d{2}-\d{2}$/.test(String(i.value || '')));
+      const t = ins.filter(i => /^\d{1,2}:\d{2}$/.test(String(i.value || '')));
+      return (d && t.length >= 2) ? { d, t } : null;
+    };
+
+    const withFields = (cb, tries = 20) => {
+      const found = pick();
+      if (found) return cb(found);
+      if (tries <= 0) return cb(null);
+      const anchor = dateRow();
+      if (anchor) pointerClick(anchor);
+      setTimeout(() => withFields(cb, tries - 1), 150);
+    };
+
+    // Start before end: moving the start drags the end along to keep the
+    // duration, so writing end first would be undone.
+    const plan = [
+      f => commitField(f.d, fields.date),
+      f => commitField(f.t[0], fields.start),
+      f => commitField(f.t[1], fields.end),
+    ];
+    const run = step => {
+      if (step >= plan.length) {
+        return setTimeout(() => (saveButton() || save).click(), 300);
+      }
+      withFields(found => {
+        if (found) plan[step](found);
+        else console.warn('[owa-minimal] quick add: date fields never appeared');
+        setTimeout(() => run(step + 1), 250);
+      });
+    };
+    run(0);
 
     // If any of that stalls, put the box back rather than leaving an
     // invisible modal on screen with no way to tell what happened.
@@ -1235,7 +1244,14 @@
     requestAnimationFrame(() => {
       queued = false;
       if (palette && document.styleSheets.length !== lastSheetCount) paint(false);
-      if (quickAddActive && !composeOpen()) { quickAddActive = false; unstripCompose(); }
+      // Never tear down mid-commit: React re-renders the form while the
+      // values are being written, and composeOpen() reads false for a frame
+      // or two. Acting on that undid the strip, re-hid Outlook's date row
+      // and closed the callout before the values had landed.
+      if (quickAddActive && !composeOpen() && !root.hasAttribute('data-owa-committing')) {
+        quickAddActive = false;
+        unstripCompose();
+      }
       if (!root.hasAttribute('data-owa-minimal') || !inCalendar()) return;
       adoptToolbarTheme();
       syncBar();
