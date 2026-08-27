@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      4.4.0
+// @version      4.5.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -839,7 +839,12 @@
       const ae = document.activeElement;
       if (ae && ae.getAttribute && ae.getAttribute('role') === 'button'
           && !(ae.id || '').startsWith('selectedInterval')) return;
-      if (cycleDayEvents()) claim();
+      // Claimed whether or not there is anywhere to go. Space scrolls the
+      // grid's own scroller otherwise, so a day with no events would scroll
+      // the view out from under you — the conflict is in the default, not in
+      // the cycling.
+      if (surface() && surface().contains(ae)) claim();
+      cycleDayEvents();
       return;
     }
     const target = ('ribbon' in binding) ? findControl(binding) : navButton(binding.nav);
@@ -1168,15 +1173,33 @@
 
   // Must run before any override lands, and always map from this — mapping
   // from live values would compound the remap on every theme change.
+  // The snapshot has to be of OWA's colours, not ours. Since the cached CSS
+  // now goes in at document-start, by the time this runs the tokens on screen
+  // are already mapped — snapshotting them would map them a second time, and
+  // the result is a washed-out theme that looks like no theme at all.
+  //
+  // This is the same compounding bug as the very first version of the theme
+  // code, reintroduced the moment painting moved earlier than snapshotting.
+  // Our sheets are switched off for the read and back on straight after;
+  // getComputedStyle forces a recalculation, so the values are honest.
   function takeSnapshot() {
-    const cs = getComputedStyle(root);
-    if (!cs.getPropertyValue('--colorNeutralBackground1').trim()) return false;
-    snapshot = {};
-    for (let i = 0; i < cs.length; i++) {
-      const p = cs[i];
-      if (p.startsWith('--')) snapshot[p] = cs.getPropertyValue(p).trim();
+    const ours = ['omarchy-owa-theme', 'omarchy-owa-literals']
+      .map(id => document.getElementById(id))
+      .filter(Boolean);
+    const was = ours.map(el => el.disabled);
+    ours.forEach(el => { el.disabled = true; });
+    try {
+      const cs = getComputedStyle(root);
+      if (!cs.getPropertyValue('--colorNeutralBackground1').trim()) return false;
+      snapshot = {};
+      for (let i = 0; i < cs.length; i++) {
+        const p = cs[i];
+        if (p.startsWith('--')) snapshot[p] = cs.getPropertyValue(p).trim();
+      }
+      return true;
+    } finally {
+      ours.forEach((el, i) => { el.disabled = was[i]; });
     }
-    return true;
   }
 
   function makeMapper(palette) {
@@ -1664,8 +1687,18 @@
     const events = calendarEvents();
     const slot = gridSlot();
     const at = events.findIndex(o => o.el === ae || o.el.contains(ae));
-    const toBar = () => (barButtons()[0] || slot)?.focus();
-    const toSlot = () => (slot || barButtons()[0])?.focus();
+    const toBar = () => barButtons()[0]?.focus();
+    // Never fall back into the bar. There is not always a selected slot —
+    // land somewhere else first and the grid has no selection at all — and
+    // falling back to a bar button meant Tab from the bar went to the bar,
+    // so it stuck there. Shift+Tab looked fine only because it routes via
+    // the nearest event, which does exist.
+    const toCalendar = () => {
+      if (slot) { slot.focus(); return; }
+      if (events.length) { nearestEvent(events).el.focus(); return; }
+      // Nothing to focus in the calendar: leave focus alone rather than
+      // bouncing it back where it came from.
+    };
 
     e.preventDefault();
     e.stopPropagation();
@@ -1684,12 +1717,12 @@
     const near = () => (events.length ? nearestEvent(events).el : null);
 
     if (e.shiftKey) {
-      if (inBar) { (near() || slot)?.focus(); return; }   // bar ← event
-      if (at >= 0) { toSlot(); return; }                  // event ← slot
+      if (inBar) { const t = near(); if (t) t.focus(); else toCalendar(); return; }
+      if (at >= 0) { toCalendar(); return; }              // event ← slot
       toBar();                                            // slot ← bar
       return;
     }
-    if (inBar || ae === document.body) { toSlot(); return; }   // bar → slot
+    if (inBar || ae === document.body) { toCalendar(); return; }   // bar → slot
     if (at >= 0) { toBar(); return; }                          // event → bar
     const target = near();                                     // slot → event
     if (target) target.focus(); else toBar();

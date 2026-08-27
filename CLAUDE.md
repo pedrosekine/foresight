@@ -51,6 +51,18 @@ reasonable and both cost a capability the reduction had no business touching.
 Put focus back only when it is genuinely lost — `body`, or outside the surface
 entirely — and never take it from somewhere the user deliberately put it.
 
+## Snapshot before you paint
+
+`takeSnapshot()` must capture **Outlook's** colours, never ours. It reads
+computed styles, so if our sheets are live it captures our own output and maps
+it a second time — the theme washes out and reads as no theme at all. It
+disables our two style elements for the read and restores them straight after.
+
+This has now been the same bug twice: once in the original theme code, and
+again the moment cached CSS started going in at document-start, which put
+painting *before* snapshotting for the first time. Any change that moves work
+earlier in the load has to be checked against it.
+
 ## The one rule the others come from
 
 **Measure it. Do not reason about what the DOM must be doing.**
