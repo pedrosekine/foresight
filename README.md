@@ -75,6 +75,7 @@ Add the flag by hand to any URL to opt a regular tab in.
 | `d` / `w` / `m` | day / week / month view |
 | `j` / `k` | next / previous period (vim direction) |
 | `s` | show / hide the calendars sidebar |
+| `Space` | walk the events on the day you are looking at |
 | `Tab` | rotate: bar → slot → nearest event → bar |
 | `←` `→` | move along the action bar, once you are on it |
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      4.3.0
+// @version      4.4.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -127,6 +127,18 @@
   const THEME_POLL_MS = setting('themePollMs');
 
   const HOTKEY = e => e.altKey && e.shiftKey && (e.key === 'O' || e.key === 'o');
+
+  // Declared up here rather than beside the theme code that uses them:
+  // injectCachedCss runs at document-start, and a `const` further down the
+  // file is in its temporal dead zone at that point — a ReferenceError, not
+  // a syntax error, so nothing catches it until the feature quietly stops.
+  const PALETTE_KEY = '_palette';
+  const CSS_KEY = '_themeCss';
+
+  // Before OWA has rendered a single pixel. `sheet()` falls back to
+  // documentElement when there is no <head> yet, which at document-start
+  // there is not.
+  injectCachedCss();
 
   // When the Omarchy theme's mode differs from the one OWA is rendering,
   // flipping luminance makes the app follow the mode — but it also breaks
@@ -780,6 +792,7 @@
     d: { ribbon: 2504, title: 'Day' },
     w: { ribbon: 2519, title: 'Week' },
     m: { ribbon: 2505, title: 'Month' },
+    ' ': { dayEvents: true, title: 'Next event today' },
     s: { pane: true, title: 'Calendars' },
     t: { nav: 0, title: 'Today' },
     j: { nav: 2, title: 'Next' },        // vim: j moves forward
@@ -821,6 +834,14 @@
 
     if (binding.quickAdd) { claim(); quickAdd(); return; }
     if (binding.pane) { claim(); setPane(!root.hasAttribute('data-owa-pane')); return; }
+    if (binding.dayEvents) {
+      // On an event already, Space means "open this one" — leave it to Fluent.
+      const ae = document.activeElement;
+      if (ae && ae.getAttribute && ae.getAttribute('role') === 'button'
+          && !(ae.id || '').startsWith('selectedInterval')) return;
+      if (cycleDayEvents()) claim();
+      return;
+    }
     const target = ('ribbon' in binding) ? findControl(binding) : navButton(binding.nav);
     if (!target) {
       console.warn('[owa-minimal] no control for', e.key, '→', binding.title);
@@ -1208,7 +1229,7 @@
     if (!st) {
       st = document.createElement('style');
       st.id = id;
-      (document.head || root).appendChild(st);
+      (document.head || document.documentElement).appendChild(st);
     }
     return st;
   }
@@ -1288,12 +1309,43 @@
             : (typeof GM !== 'undefined' && GM.xmlHttpRequest) ? GM.xmlHttpRequest : null;
   let warned = false;
 
-  // The palette is kept between sessions so the app opens already themed.
-  // Without it the first paint waits on an HTTP round-trip to the local
-  // server, which is a visible second of stock Outlook blue on every load.
-  // The cache is only a starting point: the poll still runs, and repaints if
-  // the theme has changed since.
-  const PALETTE_KEY = '_palette';
+  // Caching the palette is not enough to make this instant. Measured on a
+  // warm page: the fetch returns in 7ms, and the sheets still do not land
+  // until 132ms, because the work is not the network — it is snapshotting
+  // OWA's tokens, mapping every colour, and emitting ~75KB of CSS. And all
+  // of that has to wait for OWA to define its tokens in the first place,
+  // which on a cold load is most of the delay.
+  //
+  // So the *output* is cached, not the input. The two sheets are pure
+  // functions of (OWA's tokens x palette), so last run's CSS is almost
+  // always this run's CSS, and it can go in before OWA has rendered
+  // anything at all. The real pipeline still runs and overwrites it, which
+  // is what picks up a theme change or an OWA update.
+  function cacheCss() {
+    if (!store.set || !palette) return;
+    const th = document.getElementById('omarchy-owa-theme');
+    if (!th || !th.textContent) return;
+    const li = document.getElementById('omarchy-owa-literals');
+    try {
+      store.set(CSS_KEY, JSON.stringify({
+        mtime: palette.mtime,
+        theme: th.textContent,
+        literals: li ? li.textContent : '',
+      }));
+    } catch (_) { /* quota — the app just starts unthemed next time */ }
+  }
+
+  // Called before anything else, so the first frame the browser paints is
+  // already in the right colours.
+  function injectCachedCss() {
+    if (!store.get) return false;
+    let c;
+    try { c = JSON.parse(store.get(CSS_KEY) || 'null'); } catch (_) { return false; }
+    if (!c || !c.theme) return false;
+    sheet('omarchy-owa-theme').textContent = c.theme;
+    if (c.literals) sheet('omarchy-owa-literals').textContent = c.literals;
+    return true;
+  }
 
   function cachePalette(data) {
     if (!store.set) return;
@@ -1349,6 +1401,12 @@
         palette = data;
         cachePalette(data);
         paint(true);
+        cacheCss();
+        // Griffel keeps injecting stylesheets as the app warms up, so the
+        // literals sheet grows for a while after the first paint. Catch up
+        // once things have settled, or the cache only ever holds what was
+        // known in the first second.
+        setTimeout(cacheCss, 5000);
       },
       onerror: () => {}, ontimeout: () => {},
     });
@@ -1570,6 +1628,26 @@
 
   const barButtons = () => [...document.querySelectorAll('#omarchy-owa-bar button')]
     .filter(isVisible);
+
+  // Space walks the events on the day you are looking at, nearest first and
+  // then in order, wrapping. Tab reaches one event and leaves; this is for
+  // reading down a day without losing your place.
+  //
+  // Free to take: measured on the grid, a bare Space creates nothing, moves
+  // nothing and is not otherwise handled. It is left alone while an event is
+  // focused, because Space activates a button and opening the event is the
+  // more obvious meaning there.
+  function cycleDayEvents() {
+    const here = labelKey(gridSlot());
+    if (!here) return false;
+    const sameDay = calendarEvents().filter(o => o.key.day === here.day);
+    if (!sameDay.length) return false;
+    const ae = document.activeElement;
+    const at = sameDay.findIndex(o => o.el === ae || o.el.contains(ae));
+    const next = at >= 0 ? sameDay[(at + 1) % sameDay.length] : nearestEvent(sameDay);
+    next.el.focus();
+    return true;
+  }
 
   function onRegionTab(e) {
     if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) return;
