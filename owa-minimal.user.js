@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      4.1.2
+// @version      4.2.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -1467,6 +1467,120 @@
     gridSlot()?.focus();
   }
 
+  // Tab is a two-region switch: the calendar, or the bar. Everything else on
+  // the page is out of the order entirely, so it is always obvious where the
+  // next press goes.
+  //
+  // Inside the calendar it still reaches events, because opening one with
+  // Enter and deleting it with Delete is worth keeping — but it goes to the
+  // event nearest where you are rather than the first of the day, which is
+  // what Outlook does and what makes it feel arbitrary when you have arrowed
+  // to 15:00 and land on something at 08:00.
+  //
+  // Position cannot be used for any of this: the selected slot's rect is zero
+  // wide and spans the entire day (w:0, h:1920), so it says nothing about
+  // where you are. The aria-labels do — "17:30 to 18:00, Tuesday, August 25,
+  // 2026" — and the numbers in them are the same in every locale even though
+  // the words are not. Day headers carry a date but no year, so requiring a
+  // year keeps them out without naming them.
+  const labelKey = el => {
+    const l = (el && el.getAttribute('aria-label')) || '';
+    const date = /\b(\d{1,2}),\s*(\d{4})\b/.exec(l);
+    if (!date) return null;
+    const time = /(\d{1,2}):(\d{2})/.exec(l);
+    return {
+      day: +date[1],
+      year: +date[2],
+      mins: time ? (+time[1]) * 60 + (+time[2]) : 0,   // all-day sorts first
+      x: Math.round(el.getBoundingClientRect().x),
+    };
+  };
+
+  // Chronological order. Sorting on the day number rather than a parsed date
+  // is deliberate: month names are translated, and within any one view a day
+  // number appears once. It misorders across a month boundary in month view,
+  // which is a smaller price than depending on locale.
+  function calendarEvents() {
+    const s = surface();
+    if (!s) return [];
+    return [...s.querySelectorAll('[role="button"][aria-label]')]
+      .filter(isVisible)
+      .filter(el => !(el.id || '').startsWith('selectedInterval'))
+      .map(el => ({ el, key: labelKey(el) }))
+      .filter(o => o.key)
+      .sort((a, b) => a.key.day - b.key.day || a.key.mins - b.key.mins || a.key.x - b.key.x);
+  }
+
+  // Nearest in time on the same day, and only then on another day — so a slot
+  // at 15:00 with an event at 15:00 lands on that one.
+  function nearestEvent(events) {
+    const here = labelKey(gridSlot());
+    if (!here || !events.length) return events[0];
+    let best = events[0], bestDistance = Infinity;
+    for (const o of events) {
+      const distance = Math.abs(o.key.day - here.day) * 100000
+                     + Math.abs(o.key.mins - here.mins);
+      if (distance < bestDistance) { bestDistance = distance; best = o; }
+    }
+    return best;
+  }
+
+  const barButtons = () => [...document.querySelectorAll('#omarchy-owa-bar button')]
+    .filter(isVisible);
+
+  function onRegionTab(e) {
+    if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) return;
+    // The compose runs its own trap, and typing anywhere is never ours.
+    if (composeOpen() || root.hasAttribute('data-owa-quickadd')) return;
+    if (!root.hasAttribute('data-owa-minimal') || !inCalendar()) return;
+    if (isTyping(e.target)) return;
+
+    const ae = document.activeElement;
+    const inBar = !!(ae && ae.closest && ae.closest('#omarchy-owa-bar'));
+    const inSurface = !!(ae && surface() && surface().contains(ae));
+    if (!inBar && !inSurface && ae !== document.body) return;
+
+    const events = calendarEvents();
+    const slot = gridSlot();
+    const at = events.findIndex(o => o.el === ae || o.el.contains(ae));
+    const toBar = () => (barButtons()[0] || slot)?.focus();
+    const toSlot = () => (slot || barButtons()[0])?.focus();
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.shiftKey) {
+      if (inBar) { (events.length ? events[events.length - 1].el : slot)?.focus(); return; }
+      if (at > 0) { events[at - 1].el.focus(); return; }
+      if (at === 0) { toSlot(); return; }
+      toBar();                                  // on the slot, or nowhere
+      return;
+    }
+    if (inBar || ae === document.body) { toSlot(); return; }
+    if (at >= 0) {
+      if (at + 1 < events.length) events[at + 1].el.focus();
+      else toBar();
+      return;
+    }
+    // on the slot: the nearest event, or straight back to the bar
+    const near = events.length ? nearestEvent(events) : null;
+    if (near) near.el.focus(); else toBar();
+  }
+
+  // With only one stop for the whole bar, its buttons need their own key —
+  // the usual toolbar convention.
+  function onBarArrows(e) {
+    if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    const ae = document.activeElement;
+    if (!ae || !ae.closest || !ae.closest('#omarchy-owa-bar')) return;
+    const buttons = barButtons();
+    const at = buttons.indexOf(ae);
+    if (at < 0) return;
+    e.preventDefault();
+    const next = e.key === 'ArrowRight' ? at + 1 : at - 1;
+    buttons[(next + buttons.length) % buttons.length].focus();
+  }
+
   // Tab should reach the calendar and the bar, and nothing else. Outlook
   // leaves ~60 focusable controls on the page even with its chrome hidden —
   // the suite header, the app rail, the ribbon — because hidden is not the
@@ -1598,6 +1712,8 @@
   addEventListener('keydown', onShortcut, true);
   // Before onComposeEnter, so Enter on the date row opens the picker
   // instead of saving.
+  addEventListener('keydown', onRegionTab, true);
+  addEventListener('keydown', onBarArrows, true);
   addEventListener('keydown', onQuickAddTab, true);
   addEventListener('keydown', onComposeEnter, true);
 
