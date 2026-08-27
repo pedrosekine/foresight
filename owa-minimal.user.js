@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      4.0.0
+// @version      4.1.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -346,6 +346,14 @@
       };
       input.addEventListener('blur', commit);
       input.addEventListener('keydown', e => { if (e.key === 'Tab') commit(); });
+      // Select on arrival, so tabbing in and typing overwrites rather than
+      // inserting into whatever is already there. These fields are only ever
+      // replaced wholesale — nobody edits one digit of a date — and a caret
+      // sitting in the middle of "2026-08-27" is a trap. select() has to wait
+      // a tick: focus() sets the caret afterwards and would undo it.
+      const selectAll = () => setTimeout(() => input.select(), 0);
+      input.addEventListener('focus', selectAll);
+      input.addEventListener('click', selectAll);
       return input;
     };
 
@@ -1409,6 +1417,55 @@
   }
 
   let queued = false;
+  // The grid's own focus target. Outlook gives it an id prefix and an
+  // aria-label describing the slot, and it is what the arrow keys move —
+  // so if anything else holds focus, the arrows do nothing at all.
+  const gridSlot = () => q('[id^="selectedInterval_id"]');
+
+  // Arrow navigation is fundamental here, and it only works while the grid
+  // has focus. Outlook focuses the slot itself on load, but a dialog, a
+  // toast, or a stray click leaves focus somewhere it does nothing — and
+  // there is no way back without the mouse, which is the whole point.
+  // So focus is handed back whenever it has drifted somewhere useless.
+  function keepGridFocused() {
+    if (composeOpen() || root.hasAttribute('data-owa-quickadd')) return;
+    const ae = document.activeElement;
+    // Leave it alone whenever focus is somewhere deliberate: a field, our
+    // own bar, the sidebar, or already on the grid.
+    if (ae && ae !== document.body) {
+      if (ae.closest('#omarchy-owa-bar, [id^="selectedInterval_id"], input, textarea, '
+                   + '[contenteditable="true"], [role="dialog"], [role="listbox"]')) return;
+      if (ae.id && ae.id.startsWith('selectedInterval_id')) return;
+    }
+    gridSlot()?.focus();
+  }
+
+  // Tab should reach the handful of things this calendar is made of, and
+  // nothing else. Outlook leaves ~60 focusable controls on the page even
+  // with its chrome hidden, so they are taken out of the order rather than
+  // filtered — the compose is skipped, because stripCompose whitelists its
+  // own stops and the two passes would fight.
+  const PAGE_KEEP = '#omarchy-owa-bar, #omarchy-owa-toggle, [id^="selectedInterval_id"], '
+                  + '[data-app-section="CalendarSurfaceNavigationToolbar"], '
+                  + '#omarchy-owa-pane, [data-owa-pane-host]';
+  // Throttled: update() runs on every mutation, and this walks every
+  // focusable on the page. Twice a second is far more than enough to catch
+  // controls Outlook adds as you navigate.
+  let lastRestrict = 0;
+  function restrictTabStops(force) {
+    if (!root.hasAttribute('data-owa-minimal')) return;
+    const now = performance.now();
+    if (!force && now - lastRestrict < 500) return;
+    lastRestrict = now;
+    for (const el of document.querySelectorAll(FOCUSABLE)) {
+      if (el.closest('[id^="ModalFocusTrapZone"]')) continue;   // compose owns its own
+      if (el.closest(PAGE_KEEP)) { restoreTab(el); continue; }
+      if (el.tabIndex < 0) continue;
+      el.setAttribute('data-owa-untab', el.getAttribute('tabindex') ?? '');
+      el.tabIndex = -1;
+    }
+  }
+
   function update() {
     if (queued) return;
     queued = true;
@@ -1434,6 +1491,8 @@
       syncBar();
       tagDayColumns();
       settleScroll(rescale());
+      restrictTabStops();
+      keepGridFocused();
     });
   }
 

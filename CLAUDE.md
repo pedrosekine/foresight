@@ -107,10 +107,20 @@ it disagrees. A visible failure beats a silent wrong one.
   just what changed. They are the project's memory — several of the findings
   above are only recoverable from them.
 - `node --check` before committing. Sweep for unused identifiers after deleting.
-- **Restoring code from history? Scan for what it calls that no longer exists.**
-  `node --check` passes on a call to a function that was deleted years of
-  commits ago — it is a runtime `ReferenceError`, and in a userscript it
-  surfaces as a feature silently doing nothing. Reinstating the quick-add
-  fields cost three separate crashes this way (`dateRow`, `localDate`,
-  `reactSet`), each found only by running it. Check every helper the restored
-  block references before injecting anything.
+- **Restoring code from history? List what it calls, and check each one exists.**
+  `node --check` passes on a call to a function deleted twenty commits ago —
+  it is a runtime `ReferenceError`, and in a userscript it surfaces as the
+  feature silently doing nothing. Reinstating the quick-add fields cost three
+  crashes this way (`dateRow`, `localDate`, `reactSet`), one browser round-trip
+  each. The check that works is dull and manual:
+
+  ```bash
+  for id in helperOne helperTwo; do
+    grep -qE "^  (const|function|let) $id\b" owa-minimal.user.js || echo "MISSING: $id"
+  done
+  ```
+
+  Two attempts at a general scanner both produced ~20 false positives and gave
+  *identical* output on a healthy file and a deliberately broken one, so both
+  were thrown away. A check that cannot tell the two apart is worse than none —
+  test any checker against a known-broken input before trusting it.
