@@ -74,16 +74,24 @@ Add the flag by hand to any URL to opt a regular tab in.
 | `t` | today |
 | `d` / `w` / `m` | day / week / month view |
 | `j` / `k` | next / previous period (vim direction) |
-| `Tab` | switch between the calendar and the action bar |
+| `s` | show / hide the calendars sidebar |
+| `Tab` | rotate: bar → slot → nearest event → bar |
 | `←` `→` | move along the action bar, once you are on it |
 
-**Tab has two places to be: the calendar, or the bar.** Everything else on the
-page is out of the tab order, so the next press is always predictable.
+**Tab is a three-stop rotation**, the same three in either direction:
 
-Inside the calendar the arrow keys move the selected slot, and Tab steps
-through that view's events — starting with the one **nearest where you are**,
-not the first of the day. With an event focused, Enter opens it and Delete
-removes it, which is Outlook's own behaviour and worth keeping.
+```
+   bar  →  selected slot  →  nearest event  →  bar
+```
+
+Everything else on the page is out of the tab order, so the next press is
+always predictable and the bar is never more than two away.
+
+The arrow keys move the selected slot. Tab from there grabs the event
+**nearest where you are** — not the first of the day — and with one focused,
+Enter opens it and Delete removes it. To reach a different event, arrow to it
+and press Tab: pressing an arrow with an event focused hands focus back to the
+grid, which makes that loop work without thinking about it.
 
 `c` is the fast path: it opens Outlook's compose stripped to **title, date,
 start, end and Save**, and focuses the title. Type and press Enter — saved.

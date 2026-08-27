@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      4.2.0
+// @version      4.3.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -780,6 +780,7 @@
     d: { ribbon: 2504, title: 'Day' },
     w: { ribbon: 2519, title: 'Week' },
     m: { ribbon: 2505, title: 'Month' },
+    s: { pane: true, title: 'Calendars' },
     t: { nav: 0, title: 'Today' },
     j: { nav: 2, title: 'Next' },        // vim: j moves forward
     k: { nav: 1, title: 'Previous' },    // vim: k moves back
@@ -819,6 +820,7 @@
     };
 
     if (binding.quickAdd) { claim(); quickAdd(); return; }
+    if (binding.pane) { claim(); setPane(!root.hasAttribute('data-owa-pane')); return; }
     const target = ('ribbon' in binding) ? findControl(binding) : navButton(binding.nav);
     if (!target) {
       console.warn('[owa-minimal] no control for', e.key, '→', binding.title);
@@ -1286,6 +1288,46 @@
             : (typeof GM !== 'undefined' && GM.xmlHttpRequest) ? GM.xmlHttpRequest : null;
   let warned = false;
 
+  // The palette is kept between sessions so the app opens already themed.
+  // Without it the first paint waits on an HTTP round-trip to the local
+  // server, which is a visible second of stock Outlook blue on every load.
+  // The cache is only a starting point: the poll still runs, and repaints if
+  // the theme has changed since.
+  const PALETTE_KEY = '_palette';
+
+  function cachePalette(data) {
+    if (!store.set) return;
+    try { store.set(PALETTE_KEY, JSON.stringify(data)); } catch (_) {}
+  }
+
+  function cachedPalette() {
+    if (!store.get) return null;
+    try {
+      const raw = store.get(PALETTE_KEY);
+      const data = raw ? JSON.parse(raw) : null;
+      return (data && data.colors) ? data : null;
+    } catch (_) { return null; }
+  }
+
+  // Painting needs OWA's own tokens to exist, and on a cold load they do not
+  // yet — so this retries briefly rather than giving up. It stops as soon as
+  // the poll has delivered something newer.
+  function paintFromCache() {
+    const data = cachedPalette();
+    if (!data) return;
+    let tries = 0;
+    const attempt = () => {
+      if (lastMtime !== null) return;            // the live poll got there first
+      if (takeSnapshot()) {
+        palette = data;
+        paint(true);
+        return;
+      }
+      if (++tries < 40) setTimeout(attempt, 100);
+    };
+    attempt();
+  }
+
   function pollTheme() {
     if (!xhr) {
       if (!warned) { warned = true; console.warn('[owa-minimal] no GM_xmlhttpRequest; theme sync disabled'); }
@@ -1305,6 +1347,7 @@
         if (data.mtime === lastMtime) return;   // genuinely unchanged
         lastMtime = data.mtime;
         palette = data;
+        cachePalette(data);
         paint(true);
       },
       onerror: () => {}, ontimeout: () => {},
@@ -1549,22 +1592,29 @@
     e.preventDefault();
     e.stopPropagation();
 
+    // Three stops, and the same three in both directions:
+    //
+    //     bar  →  slot  →  nearest event  →  bar
+    //
+    // Stepping through every event on Tab made the ring as long as the day
+    // was busy, so going forward from the slot could take ten presses to
+    // reach the bar while going back took one. That asymmetry is what made
+    // it feel unpredictable. Reaching a *different* event is the arrow keys'
+    // job: they move the slot, and Outlook conveniently returns focus to the
+    // grid when you press one with an event focused. Arrow to it, Tab to
+    // grab it.
+    const near = () => (events.length ? nearestEvent(events).el : null);
+
     if (e.shiftKey) {
-      if (inBar) { (events.length ? events[events.length - 1].el : slot)?.focus(); return; }
-      if (at > 0) { events[at - 1].el.focus(); return; }
-      if (at === 0) { toSlot(); return; }
-      toBar();                                  // on the slot, or nowhere
+      if (inBar) { (near() || slot)?.focus(); return; }   // bar ← event
+      if (at >= 0) { toSlot(); return; }                  // event ← slot
+      toBar();                                            // slot ← bar
       return;
     }
-    if (inBar || ae === document.body) { toSlot(); return; }
-    if (at >= 0) {
-      if (at + 1 < events.length) events[at + 1].el.focus();
-      else toBar();
-      return;
-    }
-    // on the slot: the nearest event, or straight back to the bar
-    const near = events.length ? nearestEvent(events) : null;
-    if (near) near.el.focus(); else toBar();
+    if (inBar || ae === document.body) { toSlot(); return; }   // bar → slot
+    if (at >= 0) { toBar(); return; }                          // event → bar
+    const target = near();                                     // slot → event
+    if (target) target.focus(); else toBar();
   }
 
   // With only one stop for the whole bar, its buttons need their own key —
@@ -1739,6 +1789,7 @@
     document.body.appendChild(btn);
 
     pollTheme();
+    paintFromCache();                 // themed before the first poll returns
     setInterval(pollTheme, THEME_POLL_MS);
     update();
   };
