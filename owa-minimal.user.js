@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      4.1.1
+// @version      4.1.2
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -801,13 +801,30 @@
     if (isTyping(e.target) || overlayOpen()) return;
     const binding = SHORTCUTS[e.key.toLowerCase()];
     if (!binding) return;
-    if (binding.quickAdd) { e.preventDefault(); quickAdd(); return; }
+
+    // Outlook has to be stopped from seeing the key at all, not merely from
+    // acting on it. With a slot selected it creates an event from whatever
+    // you type and uses the character as the title — so `c` opened quick add
+    // *and* left a stray event called "c" behind. preventDefault alone does
+    // not help: it cancels the browser's default, while Outlook's own keydown
+    // listener still runs. This is a capture-phase listener on the window, so
+    // stopping propagation here means the key never reaches it.
+    //
+    // It only showed up right after a refresh, which is the one moment focus
+    // is reliably sitting on the grid slot, where type-to-create is armed.
+    const claim = () => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    };
+
+    if (binding.quickAdd) { claim(); quickAdd(); return; }
     const target = ('ribbon' in binding) ? findControl(binding) : navButton(binding.nav);
     if (!target) {
       console.warn('[owa-minimal] no control for', e.key, '→', binding.title);
       return;
     }
-    e.preventDefault();
+    claim();
     target.click();
   }
 
