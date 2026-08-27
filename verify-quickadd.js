@@ -114,6 +114,59 @@ window.Q = (() => {
     return { pass: true, c, pickerInside: inside, truncated };
   };
 
+  // Keyboard navigation is the point of the feature, so it gets its own check.
+  //
+  // "Is the element present?" is not enough, and missing that cost a release:
+  // shrinking the box shrank the picker's anchor, the popover started scrolling
+  // its own content sideways, and tabbing to End time scrolled Start date out
+  // of sight. Every field was present and inside the modal the whole time.
+  //
+  // So this focuses each stop in turn and then asks whether *all* the others
+  // are still where you can see them — and whether focusing anything left a
+  // container scrolled. A stop that displaces another stop is a broken path.
+  // The invariant is about the picker's three fields, because those are the
+  // ones that must be usable together. The title and Save are deliberately not
+  // included: focusing either dismisses the popover, so "every stop visible at
+  // once" was never true and a check built on it fails on a healthy box.
+  //
+  // Absence counts as failure, never as success. The first version of this
+  // check passed the broken case because narrowing the popover made the fields
+  // invisible, `fields()` returned none, and a loop over nothing finds nothing
+  // wrong — the same existence-versus-visibility trap this file warns about.
+  //
+  // Verified both ways against a live compose: passes as shipped, and on a
+  // popover forced back to its anchor width reports "focusing End time hid
+  // Start date" and "scrolled a container sideways".
+  Q.keyboard = async () => {
+    const problems = [];
+    if (!await Q.openPicker()) return { pass: false, problems: ['picker did not open'] };
+    const f = Q.fields();
+    if (f.length < 3) return { pass: false, problems: [`only ${f.length} of 3 fields visible`] };
+
+    const label = i => i.getAttribute('aria-label');
+    // Measured against the popover that clips them, not the modal: a field can
+    // sit inside the modal and still be scrolled out of its own container.
+    const visible = i => {
+      const pop = i.closest('.fui-PopoverSurface');
+      if (!pop) return false;
+      const b = i.getBoundingClientRect(), c = pop.getBoundingClientRect();
+      return b.width > 0 && b.left >= c.left - 3 && b.right <= c.right + 3;
+    };
+
+    for (const i of f) {
+      i.focus();
+      await sleep(130);
+      for (const other of f) {
+        if (!visible(other)) problems.push(`focusing ${label(i)} hid ${label(other)}`);
+      }
+      if ([...Q.modal().querySelectorAll('*')].some(el => el.scrollLeft > 1)) {
+        problems.push(`focusing ${label(i)} scrolled a container sideways`);
+      }
+    }
+    return { fields: f.map(label), pass: problems.length === 0,
+             problems: [...new Set(problems)] };
+  };
+
   Q.baseline = () => Q.check();
 
   // Every top-most branch holding none of the three nodes we need. Note it

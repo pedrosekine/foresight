@@ -4,6 +4,36 @@ A userscript that reduces Outlook Web to a calendar. It drives someone else's
 React app through the DOM, so almost every rule below exists because guessing
 about that DOM produced a bug that shipped.
 
+## What this is for
+
+Two constraints decide the design. They are not preferences to trade away when
+something turns out to be hard.
+
+**Keyboard navigation is fundamental.** The whole point is creating and moving
+around events without reaching for the mouse: `j`/`k` for the week, arrow keys
+for the slot, `c`, type, Tab, Enter. A change that leaves the mouse as the only
+way to do something has broken the feature, whatever it does for the layout.
+Judge a change by whether the keyboard path still works end to end, not by
+whether the element is present.
+
+This is not hypothetical. Reducing the box shrank the date picker's anchor,
+which made its popover scroll sideways — so tabbing to End time scrolled Start
+date out of sight. Everything was "there"; the keyboard path was broken. An
+earlier version put the date row in the tab order when pressing Enter on it did
+nothing, which is worse than leaving it out.
+
+**Minimal, but not at the cost of the functions we want.** Removing chrome is
+the means; the end is a calendar that does what a calendar has to do — create
+an event, set its date and time, accept and decline invitations. When a
+reduction and a capability collide, the capability wins and the reduction gets
+reworked.
+
+Also not hypothetical. Date editing was once dropped from the quick-add box
+because driving Outlook's picker looked impossible — a smaller box that could
+no longer set a date. That was the wrong call: the picker had been opening all
+along and the strip was hiding it. If a capability seems to require giving up
+the reduction, suspect the diagnosis before accepting the trade.
+
 ## The one rule the others come from
 
 **Measure it. Do not reason about what the DOM must be doing.**

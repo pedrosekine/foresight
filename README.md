@@ -137,6 +137,7 @@ Q.candidates()      // every branch holding none of the essential nodes
 await Q.reduce()    // hide them one at a time, reverting anything that breaks
 await Q.size()      // apply the shipping widths
 await Q.verify()    // structure + open the picker + check it fits + close it
+await Q.keyboard()  // focusing any field must not displace the others
 Q.restore()
 ```
 
