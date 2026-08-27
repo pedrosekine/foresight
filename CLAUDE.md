@@ -34,6 +34,23 @@ no longer set a date. That was the wrong call: the picker had been opening all
 along and the strip was hiding it. If a capability seems to require giving up
 the reduction, suspect the diagnosis before accepting the trade.
 
+## Do not replace Outlook's keyboard model — scope around it
+
+Inside the calendar surface (`[role="main"]`) Outlook already implements a
+proper roving-focus model: the grid slot takes the arrow keys, and Tab steps
+through the events so Enter opens one and Delete removes it. It is better than
+anything worth bolting on. Reductions stop at that boundary.
+
+Learned by breaking it. A pass that took ~60 stray controls out of the tab
+order also untabbed the events, which silently removed opening and deleting
+events from the keyboard; and a focus-restorer that fired whenever the active
+element was not the grid slot *exactly* handed focus back the instant you
+tabbed to an event, so events could not be reached at all. Both looked
+reasonable and both cost a capability the reduction had no business touching.
+
+Put focus back only when it is genuinely lost — `body`, or outside the surface
+entirely — and never take it from somewhere the user deliberately put it.
+
 ## The one rule the others come from
 
 **Measure it. Do not reason about what the DOM must be doing.**

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      4.1.0
+// @version      4.1.1
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -1422,30 +1422,44 @@
   // so if anything else holds focus, the arrows do nothing at all.
   const gridSlot = () => q('[id^="selectedInterval_id"]');
 
-  // Arrow navigation is fundamental here, and it only works while the grid
-  // has focus. Outlook focuses the slot itself on load, but a dialog, a
-  // toast, or a stray click leaves focus somewhere it does nothing — and
-  // there is no way back without the mouse, which is the whole point.
-  // So focus is handed back whenever it has drifted somewhere useless.
+  // Everything the calendar itself owns. Outlook already implements a proper
+  // roving-focus model in here — the slot takes the arrow keys, and Tab steps
+  // through the events so Enter opens one and Delete removes it. That model is
+  // better than anything worth bolting on, so nothing below touches it.
+  const surface = () => q('[role="main"]') || q('[data-app-section="CalendarModule"]');
+
+  // Arrow navigation only works while the grid holds focus, and Outlook does
+  // focus the slot on load — but a dialog, a toast or a stray click takes it
+  // away, and then the arrows do nothing with no way back except the mouse.
+  //
+  // The only job here is putting focus back when it is genuinely lost. An
+  // earlier version restored it whenever the active element was not the slot
+  // exactly, which fought the user: tabbing to an event handed focus straight
+  // back to the grid, so events could not be reached at all.
   function keepGridFocused() {
     if (composeOpen() || root.hasAttribute('data-owa-quickadd')) return;
     const ae = document.activeElement;
-    // Leave it alone whenever focus is somewhere deliberate: a field, our
-    // own bar, the sidebar, or already on the grid.
     if (ae && ae !== document.body) {
-      if (ae.closest('#omarchy-owa-bar, [id^="selectedInterval_id"], input, textarea, '
-                   + '[contenteditable="true"], [role="dialog"], [role="listbox"]')) return;
-      if (ae.id && ae.id.startsWith('selectedInterval_id')) return;
+      // Inside the calendar, focus is Outlook's business — slot or event.
+      if (surface()?.contains(ae)) return;
+      // Somewhere else deliberate: our bar, a field, a dialog, the sidebar.
+      if (ae.closest('#omarchy-owa-bar, #omarchy-owa-toggle, input, textarea, '
+                   + '[contenteditable="true"], [role="dialog"], [role="listbox"], '
+                   + '[data-app-section="CalendarSurfaceNavigationToolbar"]')) return;
     }
     gridSlot()?.focus();
   }
 
-  // Tab should reach the handful of things this calendar is made of, and
-  // nothing else. Outlook leaves ~60 focusable controls on the page even
-  // with its chrome hidden, so they are taken out of the order rather than
-  // filtered — the compose is skipped, because stripCompose whitelists its
-  // own stops and the two passes would fight.
-  const PAGE_KEEP = '#omarchy-owa-bar, #omarchy-owa-toggle, [id^="selectedInterval_id"], '
+  // Tab should reach the calendar and the bar, and nothing else. Outlook
+  // leaves ~60 focusable controls on the page even with its chrome hidden —
+  // the suite header, the app rail, the ribbon — because hidden is not the
+  // same as untabbable. Those come out of the tab order.
+  //
+  // What stays is everything inside the calendar surface. Removing events
+  // from the tab order took away opening one with Enter and deleting it with
+  // Delete, which is a capability the reduction has no business costing.
+  const PAGE_KEEP = '[role="main"], [data-app-section="CalendarModule"], '
+                  + '#omarchy-owa-bar, #omarchy-owa-toggle, '
                   + '[data-app-section="CalendarSurfaceNavigationToolbar"], '
                   + '#omarchy-owa-pane, [data-owa-pane-host]';
   // Throttled: update() runs on every mutation, and this walks every
