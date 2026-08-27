@@ -107,3 +107,10 @@ it disagrees. A visible failure beats a silent wrong one.
   just what changed. They are the project's memory — several of the findings
   above are only recoverable from them.
 - `node --check` before committing. Sweep for unused identifiers after deleting.
+- **Restoring code from history? Scan for what it calls that no longer exists.**
+  `node --check` passes on a call to a function that was deleted years of
+  commits ago — it is a runtime `ReferenceError`, and in a userscript it
+  surfaces as a feature silently doing nothing. Reinstating the quick-add
+  fields cost three separate crashes this way (`dateRow`, `localDate`,
+  `reactSet`), each found only by running it. Check every helper the restored
+  block references before injecting anything.

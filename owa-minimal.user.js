@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Outlook Web — minimal calendar (Omarchy)
 // @namespace    omarchy
-// @version      3.12.0
+// @version      4.0.0
 // @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
 // @license      MIT
 // @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
@@ -185,11 +185,200 @@
   const isVisible = el => !!el && el.getBoundingClientRect().height > 0;
   const composeOpen = () => !!q('[id^="EVENT_CalendarCompose"]');
 
+  const localDate = (d = new Date()) => {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+
+  // Poll rather than observe: each step here is a React render away, and a
+  // short bounded wait is easier to reason about than a tree of observers.
   function whenReady(check, cb, tries = 40) {
     const found = check();
     if (found) return cb(found);
     if (tries <= 0) return console.warn('[owa-minimal] quick add: timed out');
     setTimeout(() => whenReady(check, cb, tries - 1), 100);
+  }
+
+  // React keeps its own copy of an input's value and ignores direct
+  // assignment, so go through the prototype's native setter and then fire
+  // the events it listens for.
+  function reactSet(input, value) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // Outlook's date and time fields are comboboxes: they hold a draft value
+  // and only commit it on Enter — and only while focused. reactSet alone
+  // leaves the input *showing* the new value while the form keeps the old
+  // one, which then saves silently at the wrong time. Focus first, Enter
+  // after; both are required.
+  function commitField(input, value) {
+    input.focus();
+    reactSet(input, value);
+    for (const type of ['keydown', 'keyup']) {
+      input.dispatchEvent(new KeyboardEvent(type, {
+        key: 'Enter', bubbles: true, cancelable: true, keyCode: 13, which: 13,
+      }));
+    }
+  }
+
+  // Which day the new event should land on. OWA always prefills today, and
+  // ignores the week you're looking at — so only override when today isn't
+  // on screen. Returning null means "leave OWA's own prefill alone", which
+  // already gives today at the current time for 30 minutes.
+  function targetDate() {
+    const cols = [...document.querySelectorAll('[data-column-date]')]
+      .map(e => e.dataset.columnDate).filter(Boolean).sort();
+    if (!cols.length) return null;
+    return cols.includes(localDate()) ? null : cols[0];
+  }
+
+  // Fluent's date summary listens on pointer events, not click. A bare
+  // .click() on it does nothing at all — this is what opens the callout
+  // holding the only real date/time fields Outlook has.
+  function pointerClick(el) {
+    const r = el.getBoundingClientRect();
+    const o = { bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true,
+                clientX: Math.round(r.x + Math.min(40, r.width / 2)),
+                clientY: Math.round(r.y + r.height / 2) };
+    for (const type of ['pointerover', 'pointerenter', 'pointerdown', 'mousedown',
+                        'pointerup', 'mouseup', 'click']) {
+      el.dispatchEvent(type.startsWith('pointer') ? new PointerEvent(type, o) : new MouseEvent(type, o));
+    }
+  }
+
+  // Outlook renders its summary as "Wed 2026-08-26 12:30 - 13:00". The date
+  // is ISO and the times are 24h, so both survive without locale parsing;
+  // if the shape ever changes we fall back to computing them ourselves.
+  function currentSlot() {
+    const row = dateControl();
+    const text = row ? row.textContent : '';
+    const date = (text.match(/\d{4}-\d{2}-\d{2}/) || [])[0];
+    const times = text.match(/\d{1,2}:\d{2}/g) || [];
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const start = times[0] || `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const [h, m] = start.split(':').map(Number);
+    const endDefault = `${pad((h + (m + 30 >= 60 ? 1 : 0)) % 24)}:${pad((m + 30) % 60)}`;
+    return { date: date || localDate(), start, end: times[1] || endDefault };
+  }
+
+  // Our own date/time row. Outlook's real fields live in a callout that
+  // closes the moment anything else is touched, so they can't be tabbed
+  // through — these stand in for them and are written across on save.
+  // Native date/time inputs bring a picker and keyboard entry for free.
+  const pad = n => String(n).padStart(2, '0');
+  const toMinutes = hhmm => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+  const fromMinutes = total => `${pad(Math.floor((total % 1440) / 60))}:${pad(total % 60)}`;
+
+  // 24-hour, and forgiving: "1700", "17", "17:00", "5pm", "5.30pm".
+  function parseTime(raw) {
+    const s = String(raw).trim().toLowerCase();
+    if (!s) return null;
+    const pm = s.includes('p'), am = s.includes('a');
+    const digits = s.replace(/\D/g, '');
+    if (!digits) return null;
+    let h, m;
+    if (/[:.]/.test(s)) {
+      const [a, b] = s.split(/[:.]/);
+      h = Number(a.replace(/\D/g, ''));
+      m = Number((b || '0').replace(/\D/g, '') || 0);
+    } else if (digits.length <= 2) {
+      h = Number(digits); m = 0;
+    } else {
+      h = Number(digits.slice(0, digits.length - 2));
+      m = Number(digits.slice(-2));
+    }
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+    if (pm && h < 12) h += 12;
+    if (am && h === 12) h = 0;
+    if (h > 23 || m > 59) return null;
+    return `${pad(h)}:${pad(m)}`;
+  }
+
+  // Day-first, matching how dates are written here: "16", "16.9", "16/09",
+  // "16.09.2026", "1609", and full ISO. Missing parts come from the day the
+  // box opened on.
+  function parseDate(raw, baseISO) {
+    const s = String(raw).trim();
+    if (!s) return null;
+    const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+    if (iso) return `${iso[1]}-${pad(+iso[2])}-${pad(+iso[3])}`;
+
+    const [by, bm] = baseISO.split('-').map(Number);
+    const digits = s.replace(/\D/g, '');
+    let parts = s.split(/\D+/).filter(Boolean).map(Number);
+    if (parts.length === 1 && digits.length === 4) {
+      parts = [+digits.slice(0, 2), +digits.slice(2)];   // DDMM
+    }
+    const [d, mo, y] = parts;
+    const year = y ? (y < 100 ? 2000 + y : y) : by;
+    const month = mo || bm;
+    if (!(d >= 1 && d <= 31) || !(month >= 1 && month <= 12)) return null;
+    return `${year}-${pad(month)}-${pad(d)}`;
+  }
+
+  let qaRow = null;
+
+  function buildFields() {
+    const slot = currentSlot();
+    const good = { date: targetDate() || slot.date, start: slot.start, end: slot.end };
+
+    qaRow = document.createElement('div');
+    qaRow.id = 'omarchy-qa-row';
+
+    // Plain text, not input[type=date|time]: the native ones split into
+    // hh / mm / AM-PM segments that are each their own tab stop, so
+    // reaching the end time takes six presses instead of three.
+    const make = (key, parse, after) => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = good[key];
+      input.spellcheck = false;
+      input.autocomplete = 'off';
+      input.setAttribute('aria-label', key);
+      const commit = () => {
+        const parsed = parse(input.value);
+        if (parsed) { const prev = good[key]; good[key] = parsed; if (after) after(prev); }
+        input.value = good[key];      // unparseable input reverts, never saves junk
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', e => { if (e.key === 'Tab') commit(); });
+      return input;
+    };
+
+    // Moving the start drags the end along, keeping the duration.
+    const date = make('date', v => parseDate(v, good.date));
+    const start = make('start', parseTime, prev => {
+      const span = toMinutes(good.end) - toMinutes(prev);
+      good.end = fromMinutes(toMinutes(good.start) + (span > 0 ? span : 30));
+      if (qaRow._fields) qaRow._fields.end.value = good.end;
+    });
+    const end = make('end', parseTime);
+
+    // Save lives earlier in the DOM than the form, so tabbing forward off
+    // the end field runs out of the modal entirely and lands on <body>.
+    // Hand focus over explicitly to close the loop: end → Save → Enter.
+    end.addEventListener('keydown', e => {
+      if (e.key !== 'Tab' || e.shiftKey) return;
+      const save = saveButton();
+      if (!save) return;
+      e.preventDefault();
+      save.focus();
+    });
+
+    const dash = document.createElement('span');
+    dash.textContent = '–';
+    qaRow.append(date, start, dash, end);
+    qaRow._fields = { date, start, end };
+    qaRow._read = () => ({
+      date: parseDate(date.value, good.date) || good.date,
+      start: parseTime(start.value) || good.start,
+      end: parseTime(end.value) || good.end,
+    });
+    return qaRow;
   }
 
   // Save carries no id, but it does carry Office toolbar metadata that is
@@ -212,12 +401,83 @@
     return bar ? vis(bar.querySelectorAll('button'))[0] : null;
   }
 
-  // The date row in the box is Outlook's own, so whatever it shows is
-  // already what will be saved. Enter just saves.
+  // Our fields are the ones on screen, so their values have to be written
+  // into Outlook's own before saving. Those live in a picker that is opened
+  // for the moment of the commit and never shown: the modal is blanked
+  // while this runs, and it closes immediately after.
+  //
+  // Opening it works even though the date row is hidden, because
+  // dispatchEvent delivers straight to an element rather than hit-testing
+  // its way there. That is the whole reason this design is possible; the
+  // earlier attempt was abandoned on the belief that a hidden row could not
+  // be opened, which was a misreading of our own CSS hiding the popover.
+  let commitInFlight = false;
+
   function commitAndSave() {
+    if (commitInFlight) return;                 // Enter twice must not save twice
     const save = saveButton();
     if (!save) return console.warn('[owa-minimal] quick add: no Save button');
-    save.click();
+    const want = qaRow && qaRow._read && qaRow._read();
+    if (!want) { save.click(); return; }        // no fields: nothing to write across
+
+    commitInFlight = true;
+    let finished = false;
+
+    // The failure that matters: if the write does not land, Outlook keeps its
+    // prefilled slot and saving files the event at the wrong time, silently.
+    // So the row is read back first, and a disagreement abandons the save.
+    const landed = () => {
+      const slot = currentSlot();
+      return slot.date === want.date && slot.start === want.start;
+    };
+    const giveUp = () => {
+      if (finished) return;
+      finished = true; commitInFlight = false;
+      console.warn('[owa-minimal] quick add: date did not take, leaving the '
+                 + 'compose open rather than saving at the wrong time');
+      quickAddActive = false;
+      unstripCompose();
+    };
+    const done = () => {
+      if (finished) return;
+      if (!landed()) return giveUp();
+      finished = true; commitInFlight = false;
+      root.removeAttribute('data-owa-committing');
+      (saveButton() || save).click();
+    };
+    setTimeout(done, 4000);                     // never wedge mid-commit
+
+    root.setAttribute('data-owa-committing', '');
+
+    const row = dateControl();
+    if (!row) return giveUp();
+
+    // Our own inputs are excluded: a text field holding YYYY-MM-DD matches
+    // the same test as Outlook's and wins on DOM order, which once quietly
+    // committed our fields to themselves.
+    const pick = () => {
+      const d = [...document.querySelectorAll('input[id^="DatePicker"]')]
+        .filter(isVisible).find(i => !i.closest('#omarchy-qa-row'));
+      const t = [...document.querySelectorAll('input.ms-ComboBox-Input')]
+        .filter(isVisible)
+        .filter(i => !i.closest('#omarchy-qa-row'))
+        .filter(i => /^\d{1,2}:\d{2}$/.test(String(i.value || '')));
+      return (d && t.length >= 2) ? { d, t } : null;
+    };
+
+    requestAnimationFrame(() => requestAnimationFrame(() => pointerClick(row)));
+    whenReady(pick, () => {
+      // Re-read before each write: committing one field re-renders the row
+      // and replaces the other two. Start before end, because moving the
+      // start drags the end along.
+      const writes = [
+        () => { const p = pick(); if (p) commitField(p.d, want.date); },
+        () => { const p = pick(); if (p) commitField(p.t[0], want.start); },
+        () => { const p = pick(); if (p) commitField(p.t[1], want.end); },
+      ];
+      writes.forEach((w, i) => setTimeout(w, i * 120));
+      setTimeout(done, writes.length * 120 + 400);
+    }, 30);   // ~3s: the picker takes about a second to mount
   }
 
   // Reduce the compose to the title and date rows. Walks from the title up
@@ -251,10 +511,6 @@
   let nudged = null;
   function nudgePicker() {
     const field = q('input[id^="DatePicker"]');
-    // The popover is absolutely positioned, so the box never grows to
-    // contain it — it just overflows the right edge by ~85px. Widening the
-    // box for as long as the picker is open is what keeps it inside.
-    root.toggleAttribute('data-owa-picker', !!field);
     if (!field) { nudged = null; return; }
     if (nudged === field) return;
     nudged = field;
@@ -360,24 +616,20 @@
     const shell = scroll && scroll.firstElementChild;
     if (shell) shell.setAttribute('data-owa-shell', '');
 
-    // The date summary shares a flex row with the Scheduler block, which
-    // takes 147px of the 222px available and squeezes the date itself down
-    // to 58px — three lines tall and unreadable. Quick add has no use for
-    // it. Anything holding the picker is spared, in case it ever mounts
-    // in there.
-    const summary = dateControl();
-    if (summary) {
-      let node = summary;
-      while (node.parentElement && getComputedStyle(node.parentElement).display !== 'flex') {
+    // Outlook's own date row goes entirely: our fields stand in for it, and
+    // showing both would be two sources of truth for the same value. It is
+    // only hidden, never detached — commitAndSave still opens its picker to
+    // write through, and dispatchEvent reaches an element regardless of
+    // whether it is visible.
+    const summaryRow = dateControl();
+    if (summaryRow) {
+      const dt = q('[id$="_DATETIME"]');
+      let node = dt || summaryRow;
+      while (node.parentElement && node.parentElement !== form
+             && !node.parentElement.contains(q('[id$="_SUBJECT"]'))) {
         node = node.parentElement;
       }
-      const flexRow = node.parentElement;
-      if (flexRow) {
-        for (const sib of flexRow.children) {
-          if (sib === node || sib.querySelector(PICKER)) sib.removeAttribute('data-owa-hide');
-          else sib.setAttribute('data-owa-hide', '');
-        }
-      }
+      node.setAttribute('data-owa-dtrow', '');
     }
 
     // Tab should reach the title, the date row and Save — nothing else.
@@ -385,11 +637,11 @@
     // controls in the modal, and focusing one inside the collapsed command
     // bar visibly grows the box.
     const keepFocusable = new Set([
-      save, q('[id$="_SUBJECT"] input'), dateControl(),
-      ...modal.querySelectorAll(PICKER),
+      save, q('[id$="_SUBJECT"] input'),
+      ...(qaRow ? qaRow.querySelectorAll('input') : []),
     ].filter(Boolean));
     for (const el of modal.querySelectorAll(FOCUSABLE)) {
-      if (keepFocusable.has(el)) { restoreTab(el); continue; }
+      if (keepFocusable.has(el) || el.closest('#omarchy-qa-row')) { restoreTab(el); continue; }
       if (el.tabIndex < 0) continue;
       el.setAttribute('data-owa-untab', el.getAttribute('tabindex') ?? '');
       el.tabIndex = -1;
@@ -404,13 +656,16 @@
   // Markers are cleared rather than left lying around, so `n` always gets
   // the full form even if it reuses nodes from a quick-add compose.
   const MARKERS = ['data-owa-hide', 'data-owa-fit', 'data-owa-savebar',
-                   'data-owa-savebtn', 'data-owa-shell', 'data-owa-unclip'];
+                   'data-owa-savebtn', 'data-owa-shell', 'data-owa-unclip',
+                   'data-owa-dtrow'];
 
   function unstripCompose() {
     nudged = null;
+    commitInFlight = false;
+    qaRow?.remove();
+    qaRow = null;
     root.removeAttribute('data-owa-quickadd');
     root.removeAttribute('data-owa-quickadd-pending');
-    root.removeAttribute('data-owa-picker');
     for (const attr of MARKERS) {
       for (const el of document.querySelectorAll(`[${attr}]`)) el.removeAttribute(attr);
     }
@@ -439,6 +694,12 @@
 
     whenReady(() => q('[id$="_SUBJECT"] input'), () => {
       stripCompose();
+      // Exactly where Outlook's own date row sat, which is both the right
+      // place visually and the right place for tab order — that follows DOM
+      // order. Inserting after the subject *element* instead puts the fields
+      // inside the title's flex row, beside "Add title" and clipped.
+      const dtrow = q('[data-owa-dtrow]');
+      if (dtrow && !q('#omarchy-qa-row')) dtrow.before(buildFields());
       // Re-query rather than reuse the node we waited on: stripping makes
       // React re-render the form and replace it.
       q('[id$="_SUBJECT"] input')?.focus();
@@ -455,12 +716,12 @@
   // The tab stops of the quick-add box, in the order they should be walked.
   // Save sits earlier in the DOM than the form, so relying on document order
   // sends Tab out of the modal entirely once past the last field.
+  // title → date → start → end → Save, always the same five, because our
+  // fields are always there. Outlook's picker is never a stop: it is opened
+  // only to be written to, and only for the moment of the save.
   function quickAddStops() {
-    const picker = [...document.querySelectorAll(PICKER)].filter(isVisible);
-    // While the picker is open its own fields are the middle of the walk:
-    // title → date → start → end → Save. Closed, it collapses to two stops.
-    const stops = [q('[id$="_SUBJECT"] input'), dateControl(), ...picker, saveButton()];
-    return stops.filter(Boolean);
+    const ours = qaRow ? [...qaRow.querySelectorAll('input')] : [];
+    return [q('[id$="_SUBJECT"] input'), ...ours, saveButton()].filter(Boolean);
   }
 
   // Outlook's date summary row — the thing that opens the picker.
@@ -690,23 +951,40 @@
       position: relative !important;
       padding-bottom: 56px !important;
     }
-    /* The picker needs far more room than the two rows do: 560px is where
-       its three fields stop crossing the right edge. Measured, and only
-       while it is open — the box springs back to 360 when it closes. */
-    html[data-owa-quickadd][data-owa-picker] [id^="ModalFocusTrapZone"] {
-      max-width: 560px !important;
-      min-width: 560px !important;
-      /* Room for the popover, which opens below the rows once it is wide
-         enough. At the normal 56px it lands on top of Save and hides the
-         End time field behind it. */
-      padding-bottom: 140px !important;
+    /* Outlook's date row is replaced by ours. It stays in the DOM: the
+       commit opens its picker to write through, and dispatchEvent reaches
+       an element whether or not it is displayed. The picker itself needs no
+       rule — it only ever exists during the commit, when the whole modal is
+       blanked, and it must stay focusable, which visibility:hidden would
+       prevent. */
+    html[data-owa-quickadd] [data-owa-dtrow] { display: none !important; }
+
+    /* Our own date and time fields. Text inputs, not input[type=date|time]:
+       the native ones split into hh / mm / AM-PM segments that are each
+       their own tab stop, which made reaching the end time six presses
+       instead of three. */
+    #omarchy-qa-row {
+      display: flex; align-items: center; gap: 10px;
+      margin: 2px 20px 6px 52px;
     }
-    /* Sizes to its content instead of to the date row it is anchored to. */
-    html[data-owa-quickadd] .fui-PopoverSurface {
-      width: max-content !important;
-      max-width: none !important;
+    #omarchy-qa-row input {
+      font-family: var(--owa-btn-family, inherit);
+      font-size: var(--owa-btn-size, 14px);
+      color: var(--owa-btn-fg, currentColor);
+      background: transparent;
+      border: 0; border-bottom: 1px solid var(--owa-btn-stroke, currentColor);
+      border-radius: 0; padding: 6px 2px; outline: none;
     }
-    html[data-owa-quickadd] [data-owa-unclip] { overflow: visible !important; }
+    #omarchy-qa-row input:focus-visible {
+      border-bottom-color: var(--owa-btn-fg, currentColor);
+      border-bottom-width: 2px; padding-bottom: 5px;
+    }
+    /* Sized to their content: text inputs otherwise take the browser's
+       default ~20-character width and push the box wide. */
+    #omarchy-qa-row input[aria-label="date"]  { width: 6.4em; }
+    #omarchy-qa-row input[aria-label="start"],
+    #omarchy-qa-row input[aria-label="end"]   { width: 3.4em; }
+    #omarchy-qa-row span { opacity: .55; }
     html[data-owa-quickadd] [data-owa-shell] {
       width: 100% !important;
       max-width: 100% !important;
@@ -739,7 +1017,9 @@
 
     /* Blanked between opening the compose and reducing it — otherwise
        Outlook's full form paints for a few frames first and you see it
-       flash before the small box replaces it. */
+       flash before the small box replaces it — and again for the moment of
+       the commit, while the picker is open behind it. */
+    html[data-owa-committing] [id^="ModalFocusTrapZone"],
     html[data-owa-quickadd-pending] [id^="ModalFocusTrapZone"] {
       opacity: 0 !important;
       transition: none !important;

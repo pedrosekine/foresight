@@ -75,12 +75,20 @@ Add the flag by hand to any URL to opt a regular tab in.
 | `d` / `w` / `m` | day / week / month view |
 | `j` / `k` | next / previous period (vim direction) |
 
-`c` is the fast path: it opens Outlook's compose stripped to **title, date/time
-and Save**, and focuses the title. Type and press Enter — saved.
+`c` is the fast path: it opens Outlook's compose stripped to **title, date,
+start, end and Save**, and focuses the title. Type and press Enter — saved.
 
-Tab cycles title → Save and back, and never leaves the box.
+The date and time fields are ours, and they are there from the moment the box
+opens. Tab cycles title → date → start → end → Save and never leaves the box.
+Times are forgiving: `1700`, `17`, `17:00`, `5pm` and `5.30pm` all work, and
+moving the start drags the end along to keep the duration.
 
-**To create an event somewhere other than now, select the slot first.** `c`
+**The box is one width, always.** Outlook's own date picker is never shown:
+your values are written into it for the instant of the save, behind a blanked
+modal. That is why nothing resizes.
+
+**To create an event somewhere other than now**, either type the date, or
+select the slot first. `c`
 inherits whatever the grid has selected, so the whole thing stays on the
 keyboard:
 
