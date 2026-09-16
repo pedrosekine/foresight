@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Outlook Calendar, minimal</title>
+<link rel="stylesheet" href="options.css">
+<body>
+<main>
+  <h1>Outlook Calendar, minimal</h1>
+
+  <section>
+    <h2>Use it as an app</h2>
+    <p>
+      The reduction applies to Outlook opened <strong>as an app</strong>: a window
+      without tabs or an address bar. Ordinary Outlook tabs are left alone.
+    </p>
+    <ol>
+      <li>Open <a href="https://outlook.cloud.microsoft/calendar/" target="_blank" rel="noopener">outlook.cloud.microsoft/calendar</a> and sign in.</li>
+      <li>In Chrome's menu choose <em>Cast, save and share</em> → <em>Install page as app</em>.</li>
+      <li>Open it from your launcher like any other app.</li>
+    </ol>
+    <p>
+      Or click the extension's toolbar button, which opens the calendar in a
+      window of its own, and focuses it if one is already open.
+    </p>
+    <label class="check">
+      <input type="checkbox" id="landOnCalendar">
+      Start on the calendar when the app opens on mail
+    </label>
+    <label class="check">
+      <input type="checkbox" id="applyInTabs">
+      Also apply in normal browser tabs
+    </label>
+  </section>
+
+  <section>
+    <h2>Day grid</h2>
+    <label>
+      Hours on screen at once
+      <input type="number" id="hoursVisible" min="4" max="24" step="1" placeholder="14">
+    </label>
+    <label>
+      Hour the day opens at
+      <input type="number" id="startHour" min="0" max="23" step="1" placeholder="6">
+    </label>
+  </section>
+
+  <section>
+    <h2>Colours</h2>
+    <label>
+      Palette
+      <select id="themeSource">
+        <option value="none">Outlook's own</option>
+        <option value="feed">Omarchy: follow the desktop theme</option>
+        <optgroup label="Built in" id="bundled"></optgroup>
+      </select>
+    </label>
+    <div id="feedRow" hidden>
+      <label>
+        Feed URL
+        <input type="url" id="themeUrl" placeholder="http://127.0.0.1:8787/theme.json" spellcheck="false">
+      </label>
+      <p class="hint" id="feedStatus"></p>
+    </div>
+    <p class="hint">
+      A palette tints Outlook's greys and blues while keeping its light or dark
+      mode. For a real light/dark switch, change Outlook's own Appearance setting.
+    </p>
+  </section>
+
+  <section>
+    <h2>Keyboard</h2>
+    <table>
+      <tr><td><kbd>c</kbd></td><td>quick add: type a title, Tab through date and times, Enter saves</td></tr>
+      <tr><td><kbd>n</kbd></td><td>new event, full form</td></tr>
+      <tr><td><kbd>t</kbd></td><td>today</td></tr>
+      <tr><td><kbd>d</kbd> <kbd>w</kbd> <kbd>m</kbd></td><td>day, week, month</td></tr>
+      <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>next, previous period</td></tr>
+      <tr><td><kbd>s</kbd></td><td>show or hide the calendars sidebar</td></tr>
+      <tr><td><kbd>Space</kbd></td><td>walk the events of the day you are on</td></tr>
+      <tr><td><kbd>Tab</kbd></td><td>bar → selected slot → nearest event → bar</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>move the selected slot by a day; along the bar once on it</td></tr>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>move the selected slot by 30 minutes</td></tr>
+      <tr><td><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td><td>show the full Outlook UI again</td></tr>
+    </table>
+  </section>
+
+  <p class="hint">
+    Settings save as you change them. <button id="reset" type="button">Reset to defaults</button>
+  </p>
+</main>
+<script src="options.js"></script>
+</body>
+</html>

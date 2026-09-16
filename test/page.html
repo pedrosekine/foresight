@@ -1,0 +1,28 @@
+<!doctype html>
+<!-- A stand-in for OWA that defines only what the core needs to run end to
+     end: the Fluent token the snapshot keys on, a calendar module, and a
+     literal-colour rule for the literals pass. Reports into the title so a
+     headless --dump-dom can read it. -->
+<html><head><style>
+:root { --colorNeutralBackground1: #292929; --colorNeutralForeground1: #ffffff; --colorBrandForeground1: #479ef5; --colorNeutralStroke1: #666666; }
+.lit { color: #808080; background-color: rgb(41,41,41); }
+</style></head><body>
+<div data-app-section="CalendarModule"><div role="main"></div></div>
+<script>
+window.__errors = [];
+addEventListener('error', e => window.__errors.push(String(e.message)));
+setTimeout(() => {
+  const th = document.getElementById('omarchy-owa-theme');
+  const li = document.getElementById('omarchy-owa-literals');
+  document.title = 'RESULT:' + JSON.stringify({
+    minimal: document.documentElement.hasAttribute('data-owa-minimal'),
+    bar: !!document.getElementById('omarchy-owa-bar'),
+    toggle: !!document.getElementById('omarchy-owa-toggle'),
+    style: !!document.getElementById('omarchy-owa-style'),
+    themeLen: th ? th.textContent.length : 0,
+    literalsLen: li ? li.textContent.length : 0,
+    errors: window.__errors,
+  });
+}, 4000);   // past the core's second theme poll at 3 s
+</script>
+</body></html>

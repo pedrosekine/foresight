@@ -1,8 +1,30 @@
 # Working on owa-minimal
 
-A userscript that reduces Outlook Web to a calendar. It drives someone else's
-React app through the DOM, so almost every rule below exists because guessing
-about that DOM produced a bug that shipped.
+A Chrome extension (and, from the same source, a userscript) that reduces
+Outlook Web to a calendar. It drives someone else's React app through the
+DOM, so almost every rule below exists because guessing about that DOM
+produced a bug that shipped.
+
+## Layout
+
+The reduction is `extension/core.js`, one function `owaMinimal(env)`. It
+must not know which shell it runs in: no `chrome.*`, no `GM_*`. Settings,
+the cache and the palette come through `env` (see the header comment there).
+`extension/content.js` is the Chrome shell, `userscript/env.js` the
+Violentmonkey one. `./build.sh` writes `owa-minimal.user.js` and the store
+zip; never edit the generated userscript. `./test/smoke.sh` runs both shells
+headlessly against `test/page.html` and must pass before a commit.
+
+The shells decide *whether* to run. The extension uses
+`display-mode: standalone`, which an installed web app, an `--app=` window
+and an extension popup all report and a plain tab does not (measured on
+Chromium 152, at document start). The userscript still needs `?omarchy=1`,
+because a userscript cannot ask. Keep the flag path working in the core for
+that reason.
+
+Chrome skipped the declared content script on 2 of 4 cold launches of an
+app window. `background.js` re-injects after load when the shell's marker
+is missing, so `content.js` has to stay safe to run twice.
 
 ## What this is for
 
@@ -128,14 +150,16 @@ it disagrees. A visible failure beats a silent wrong one.
 
 ## House style
 
-- Bump `@version` on every behaviour change; the local server serves the file
-  and Violentmonkey updates from it.
+- Bump `version` in `extension/manifest.json` on every behaviour change and
+  run `./build.sh`; it stamps the userscript header, and the local server
+  serves that file for Violentmonkey to update from.
 - Delete code that no longer works rather than leaving it behind a flag. Git
   keeps it; a file full of dead paths misleads the next reader.
 - Commit messages record **what was measured** and what was wrong before, not
   just what changed. They are the project's memory — several of the findings
   above are only recoverable from them.
-- `node --check` before committing. Sweep for unused identifiers after deleting.
+- `./build.sh` (which runs `node --check` on every file) and `./test/smoke.sh`
+  before committing. Sweep for unused identifiers after deleting.
 - **Restoring code from history? List what it calls, and check each one exists.**
   `node --check` passes on a call to a function deleted twenty commits ago —
   it is a runtime `ReferenceError`, and in a userscript it surfaces as the
@@ -145,7 +169,7 @@ it disagrees. A visible failure beats a silent wrong one.
 
   ```bash
   for id in helperOne helperTwo; do
-    grep -qE "^  (const|function|let) $id\b" owa-minimal.user.js || echo "MISSING: $id"
+    grep -qE "^  (const|function|let) $id\b" extension/core.js || echo "MISSING: $id"
   done
   ```
 

@@ -1,0 +1,112 @@
+[
+ {
+  "id": "catppuccin-latte",
+  "label": "Catppuccin Latte",
+  "mode": "light"
+ },
+ {
+  "id": "catppuccin",
+  "label": "Catppuccin",
+  "mode": "dark"
+ },
+ {
+  "id": "ethereal",
+  "label": "Ethereal",
+  "mode": "dark"
+ },
+ {
+  "id": "everforest",
+  "label": "Everforest",
+  "mode": "dark"
+ },
+ {
+  "id": "flexoki-light",
+  "label": "Flexoki Light",
+  "mode": "light"
+ },
+ {
+  "id": "gruvbox",
+  "label": "Gruvbox",
+  "mode": "dark"
+ },
+ {
+  "id": "hackerman",
+  "label": "Hackerman",
+  "mode": "dark"
+ },
+ {
+  "id": "kanagawa",
+  "label": "Kanagawa",
+  "mode": "dark"
+ },
+ {
+  "id": "last-horizon",
+  "label": "Last Horizon",
+  "mode": "dark"
+ },
+ {
+  "id": "lumon",
+  "label": "Lumon",
+  "mode": "dark"
+ },
+ {
+  "id": "lupine",
+  "label": "Lupine",
+  "mode": "light"
+ },
+ {
+  "id": "matte-black",
+  "label": "Matte Black",
+  "mode": "dark"
+ },
+ {
+  "id": "miasma",
+  "label": "Miasma",
+  "mode": "dark"
+ },
+ {
+  "id": "nord",
+  "label": "Nord",
+  "mode": "dark"
+ },
+ {
+  "id": "osaka-jade",
+  "label": "Osaka Jade",
+  "mode": "dark"
+ },
+ {
+  "id": "retro-82",
+  "label": "Retro 82",
+  "mode": "dark"
+ },
+ {
+  "id": "ristretto",
+  "label": "Ristretto",
+  "mode": "dark"
+ },
+ {
+  "id": "rose-pine",
+  "label": "Rose Pine",
+  "mode": "light"
+ },
+ {
+  "id": "solitude",
+  "label": "Solitude",
+  "mode": "dark"
+ },
+ {
+  "id": "tokyo-night",
+  "label": "Tokyo Night",
+  "mode": "dark"
+ },
+ {
+  "id": "vantablack",
+  "label": "Vantablack",
+  "mode": "dark"
+ },
+ {
+  "id": "white",
+  "label": "White",
+  "mode": "light"
+ }
+]

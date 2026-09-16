@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "name": "Outlook Calendar, minimal",
+  "version": "5.0.0",
+  "description": "Reduces Outlook on the web to a keyboard-driven calendar when it runs as an app. Ordinary Outlook tabs are left alone.",
+  "homepage_url": "https://github.com/pedrosekine/owa-minimal",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://outlook.office.com/*",
+    "https://outlook.office365.com/*",
+    "https://outlook.cloud.microsoft/*"
+  ],
+  "optional_host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://outlook.office.com/*",
+        "https://outlook.office365.com/*",
+        "https://outlook.cloud.microsoft/*"
+      ],
+      "js": [
+        "core.js",
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open the calendar",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "palettes/*.json"
+      ],
+      "matches": [
+        "https://outlook.office.com/*",
+        "https://outlook.office365.com/*",
+        "https://outlook.cloud.microsoft/*"
+      ]
+    }
+  ]
+}

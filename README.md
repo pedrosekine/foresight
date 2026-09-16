@@ -1,6 +1,6 @@
 # owa-minimal
 
-Outlook on the web, reduced to a calendar — and tinted to match your Omarchy theme.
+Outlook on the web, reduced to a keyboard-driven calendar, as a Chrome extension. Optionally tinted to match your Omarchy theme.
 
 Outlook's web calendar is the only client some Microsoft 365 tenants leave
 available: if yours blocks third-party OAuth consent, every native calendar app
@@ -14,47 +14,74 @@ with the controls actually worth keeping.
 
 ## Install
 
-### The userscript (all you need)
+### The Chrome extension
 
-1. Install a userscript manager — [Violentmonkey](https://violentmonkey.github.io/get-it/)
-   works on both Chromium and Firefox/Zen.
-   On Chromium you must also enable **Allow user scripts** on the extension's
-   details page (or Developer Mode); Chrome's Manifest V3 requires it.
+1. Install the extension. Until it is on the Chrome Web Store: download or
+   clone this repository, open `chrome://extensions`, turn on **Developer
+   mode**, click **Load unpacked** and pick the `extension/` folder.
+2. Open [outlook.cloud.microsoft/calendar](https://outlook.cloud.microsoft/calendar)
+   and sign in.
+3. In Chrome's menu choose **Cast, save and share → Install page as app**.
+
+Open it from your launcher like any other app. That window is reduced;
+Outlook in an ordinary tab is left exactly as it was.
+
+The extension's toolbar button does the same without installing anything:
+it opens the calendar in a window of its own, or focuses that window if it is
+already open. Right-click the button for **Options**: hours on screen, start
+hour, colour palette, and whether to also apply in normal tabs.
+
+**How it tells the app from a tab.** A window opened as an installed web app,
+with `--app=`, or as an extension popup reports `display-mode: standalone`
+to the page; a normal tab reports `browser`. Measured on Chromium 152, at
+document start and after load. No launcher flag is needed. Anything else on
+Outlook is untouched unless you opt in, either with the option or by adding
+`?omarchy=1` to a tab's URL.
+
+Works in Chromium-family browsers: Chrome, Brave, Edge, Vivaldi, Helium.
+Firefox can load the extension but has no "install as app", so it only gets
+the opt-in tab path.
+
+### The userscript (alternative)
+
+`owa-minimal.user.js` is the same code wrapped for a userscript manager, and
+is what the local update server serves.
+
+1. Install [Violentmonkey](https://violentmonkey.github.io/get-it/). On
+   Chromium you must also enable **Allow user scripts** on the extension's
+   details page; Chrome's Manifest V3 requires it.
 2. Install `owa-minimal.user.js`.
-3. Open your calendar.
-
-That's the whole thing. Everything below is optional.
-
-### The theme feed (Omarchy only)
-
-```bash
-./setup
-```
-
-Installs a user service that serves your current palette on
-`127.0.0.1:8787`. The userscript polls it and retints OWA to match. Switch
-themes and the calendar follows within a few seconds — no relogin, no reload.
-
-Undo with `./setup --uninstall`. The userscript keeps working; it just stops
-recolouring.
-
-### Pinning it as an app
+3. Pin the calendar with the flag in the URL:
 
 ```bash
 omarchy-webapp-install "Calendar" "https://outlook.cloud.microsoft/calendar/view/workweek?omarchy=1" "calendar"
 ```
 
-Note that `omarchy-launch-webapp` falls back to Chromium unless your default
-browser is Chromium-family — so install the userscript in whichever browser
-actually opens.
+A userscript cannot ask the browser which kind of window it is in, so the
+`?omarchy=1` **is required** there. It is read at document-start and stashed
+in `sessionStorage`, which is scoped to one tab: the app window keeps it
+across every in-app navigation, and an Outlook tab you open normally never
+has it. Note that `omarchy-launch-webapp` falls back to Chromium unless your
+default browser is Chromium-family, so install the script in whichever
+browser actually opens.
 
-**The `?omarchy=1` is required.** A userscript matches on URL and can't tell
-which window it's in, so without a marker it would reshape every Outlook tab in
-the browser, not just the app. The flag is read at document-start and stashed in
-`sessionStorage`, which is scoped to one tab: the app window keeps it across
-every in-app navigation, and an Outlook tab you open normally never has it.
+### Colours
 
-Add the flag by hand to any URL to opt a regular tab in.
+The extension ships Omarchy's palettes built in; pick one under **Options →
+Palette**. On Omarchy itself, choose **follow the desktop theme** instead
+and run:
+
+```bash
+./setup
+```
+
+It installs a user service that serves your current palette on
+`127.0.0.1:8787`. The extension polls it and retints OWA to match. Switch
+themes and the calendar follows within a few seconds, no relogin, no reload.
+Chrome asks once for permission to reach `127.0.0.1` when you pick that option.
+
+Undo with `./setup --uninstall`. The calendar keeps working; it just stops
+recolouring.
 
 ## Using it
 
@@ -141,18 +168,55 @@ the entire reason for skinning it rather than rebuilding it.
 
 ## Settings
 
-Violentmonkey's script editor has a **Values** tab with:
+Extension: right-click the toolbar button, **Options**. Settings save as you
+change them and sync with your Chrome profile.
 
-| key | default | |
+| setting | default | |
 |---|---|---|
-| `hoursVisible` | `14` | hours on screen at once |
-| `startHour` | `6` | where the grid sits on load |
-| `themeUrl` | `http://127.0.0.1:8787/theme.json` | palette feed |
-| `themePollMs` | `3000` | how often to check it |
+| Hours on screen at once | `14` | how much of the day the grid shows |
+| Hour the day opens at | `6` | where the grid sits on load |
+| Palette | Outlook's own | a bundled palette, or the Omarchy feed |
+| Feed URL | `http://127.0.0.1:8787/theme.json` | where the feed is |
+| Also apply in normal browser tabs | off | reduce every Outlook tab, not just the app |
+| Start on the calendar | on | an installed Outlook app opens on mail; send it on |
 
-Edited values are kept forever. Untouched ones follow the code default, so a
-better default still reaches an existing install — the script records what it
-seeded and only replaces a value that still matches it.
+Userscript: Violentmonkey's script editor has a **Values** tab with
+`hoursVisible`, `startHour`, `themeUrl` and `themePollMs`. Edited values are
+kept forever. Untouched ones follow the code default, so a better default
+still reaches an existing install: the script records what it seeded and
+only replaces a value that still matches it.
+
+## Layout and build
+
+```
+extension/core.js        the reduction, as owaMinimal(env); knows nothing of Chrome or GM
+extension/content.js     Chrome shell: storage, app-window detection, theme source
+extension/background.js  service worker: feed fetch, toolbar launch, re-injection
+extension/options.*      settings page
+extension/palettes/      Omarchy's palettes as JSON, plus index.json
+userscript/header.js     ==UserScript== block, version stamped by the build
+userscript/env.js        Violentmonkey shell: GM storage with seeding, GM XHR
+build.sh                 writes owa-minimal.user.js and dist/owa-minimal-<v>.zip
+```
+
+The version lives in `extension/manifest.json`; `./build.sh` stamps it into
+the userscript and runs `node --check` on everything. Edit the sources, never
+`owa-minimal.user.js`.
+
+**Why a content script and not a page script.** The core runs in the
+extension's isolated world. Everything it does is DOM: querying, dispatching
+events, calling the native value setter on an input. Those cross into the
+page fine, and the isolated world is what gives it `chrome.storage`. If a
+future Outlook build ever needs page-world access, Manifest V3 allows
+`"world": "MAIN"` for a content script; the price is a message bridge for
+storage, which is why it is not the default.
+
+**Injection is not guaranteed on a cold start.** Launching an app window with
+the browser closed skipped the declared content script in 2 of 4 tries. The
+service worker therefore checks every finished Outlook load for the shell's
+marker and injects the scripts if it is missing; with that in place, 6 of 6
+cold launches were reduced. The fallback lands after load, so those launches
+show the full Outlook for a moment first.
 
 ## Checking a change to quick add
 
@@ -304,10 +368,9 @@ the hide rule.
 
 ## Requirements
 
-- A userscript manager
-- Python 3.11+ for the theme feed (needs `tomllib`) — not needed for the
-  userscript alone
-- Omarchy, for the theme feed only
+- A Chromium-family browser, or a userscript manager
+- Python 3.11+ for the theme feed (needs `tomllib`), only on Omarchy
+- Node, only to run `./build.sh`
 
 ## Licence
 
