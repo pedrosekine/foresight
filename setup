@@ -6,7 +6,8 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
-UNIT=omarchy-owa-theme.service
+UNIT=foresight-theme.service
+OLD_UNIT=omarchy-owa-theme.service   # pre-rename name, removed if found
 UNIT_DIR="$HOME/.config/systemd/user"
 PALETTE="$HOME/.local/state/omarchy/current/theme/colors.toml"
 PORT=8787
@@ -43,6 +44,12 @@ if ! systemctl --user is-active --quiet "$UNIT" \
   warn "If it isn't this service, change PORT in theme-server.py and themeUrl in the userscript."
 fi
 
+if [[ -f $UNIT_DIR/$OLD_UNIT ]]; then
+  say "Removing the pre-rename $OLD_UNIT"
+  systemctl --user disable --now "$OLD_UNIT" 2>/dev/null || true
+  rm -f "$UNIT_DIR/$OLD_UNIT"
+fi
+
 say "Installing $UNIT for $ROOT"
 mkdir -p "$UNIT_DIR"
 sed "s|@INSTALL_DIR@|$ROOT|g" "$ROOT/$UNIT" > "$UNIT_DIR/$UNIT"
@@ -54,7 +61,7 @@ systemctl --user enable --now "$UNIT"
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if curl -fsS "http://127.0.0.1:$PORT/theme.json" >/dev/null 2>&1; then
     say "Palette feed is up on http://127.0.0.1:$PORT/theme.json"
-    say "Install owa-minimal.user.js in your userscript manager and you're done."
+    say "Install the extension (or foresight.user.js) in your browser and you're done."
     exit 0
   fi
   sleep 0.3

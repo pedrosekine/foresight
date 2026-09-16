@@ -13,8 +13,8 @@
   // of an app window here. background.js re-injects when that happens, so
   // this has to be safe to run twice: the marker lives in the extension's
   // isolated world, invisible to the page.
-  if (globalThis.__owaMinimalShell) return;
-  globalThis.__owaMinimalShell = true;
+  if (globalThis.__foresightShell) return;
+  globalThis.__foresightShell = true;
 
   // Measured on Chromium 152: a window opened with --app= or from an
   // installed web app reports `standalone`; a normal tab reports `browser`.
@@ -22,7 +22,7 @@
   // with no launcher flag needed. The old ?omarchy=1 flag still opts a tab
   // in, and so does the setting.
   const standalone = matchMedia('(display-mode: standalone)').matches;
-  const flagged = owaMinimal.flaggedWindow();
+  const flagged = foresight.flaggedWindow();
 
   const [sync, local] = await Promise.all([
     chrome.storage.sync.get(null),
@@ -99,5 +99,5 @@
     }
   });
 
-  owaMinimal(env);
+  foresight(env);
 })();

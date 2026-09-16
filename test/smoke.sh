@@ -35,7 +35,7 @@ expect() {  # expect <name> <json> <python expression over d>
 FAILED=0
 
 # --- userscript: the flag opts a tab in, the feed themes it ---
-sed "s|<body>|<body><script src=\"$HERE/test/gm-shim.js\"></script><script src=\"$HERE/owa-minimal.user.js\"></script>|" \
+sed "s|<body>|<body><script src=\"$HERE/test/gm-shim.js\"></script><script src=\"$HERE/foresight.user.js\"></script>|" \
   test/page.html > "$WORK/userscript.html"
 R=$(run us "file://$WORK/userscript.html?omarchy=1")
 expect "userscript, flagged tab: reduced and themed" "$R" \

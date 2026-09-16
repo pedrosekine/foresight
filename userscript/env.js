@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  if (!owaMinimal.flaggedWindow()) return;
+  if (!foresight.flaggedWindow()) return;
 
   // Wrapped rather than referenced directly — detaching these from the GM
   // object loses `this` in some managers.
@@ -74,7 +74,7 @@
 
   function theme() {
     if (!xhr) {
-      if (!warned) { warned = true; console.warn('[owa-minimal] no GM_xmlhttpRequest; theme sync disabled'); }
+      if (!warned) { warned = true; console.warn('[foresight] no GM_xmlhttpRequest; theme sync disabled'); }
       return Promise.resolve(null);
     }
     return new Promise(resolve => {
@@ -90,7 +90,7 @@
     });
   }
 
-  owaMinimal({
+  foresight({
     setting,
     cache: {
       get: key => (store.get ? store.get(key) : undefined),

@@ -1,6 +1,12 @@
-# owa-minimal
+# foresight
 
-Outlook on the web, reduced to a keyboard-driven calendar, as a Chrome extension. Optionally tinted to match your Omarchy theme.
+**A better outlook.** Outlook on the web, reduced to a calm, keyboard-driven
+calendar, as a Chrome extension. Optionally tinted to match your Omarchy theme.
+
+Chrome extensions are one of the few things people in a managed workplace
+still get to choose. This one is for anyone whose employer left them Outlook
+on the web and nothing else. The goal is fewer barriers: one install, one
+"install as app", and a calendar that stays out of your way.
 
 Outlook's web calendar is the only client some Microsoft 365 tenants leave
 available: if yours blocks third-party OAuth consent, every native calendar app
@@ -44,13 +50,13 @@ the opt-in tab path.
 
 ### The userscript (alternative)
 
-`owa-minimal.user.js` is the same code wrapped for a userscript manager, and
+`foresight.user.js` is the same code wrapped for a userscript manager, and
 is what the local update server serves.
 
 1. Install [Violentmonkey](https://violentmonkey.github.io/get-it/). On
    Chromium you must also enable **Allow user scripts** on the extension's
    details page; Chrome's Manifest V3 requires it.
-2. Install `owa-minimal.user.js`.
+2. Install `foresight.user.js`.
 3. Pin the calendar with the flag in the URL:
 
 ```bash
@@ -189,19 +195,19 @@ only replaces a value that still matches it.
 ## Layout and build
 
 ```
-extension/core.js        the reduction, as owaMinimal(env); knows nothing of Chrome or GM
+extension/core.js        the reduction, as foresight(env); knows nothing of Chrome or GM
 extension/content.js     Chrome shell: storage, app-window detection, theme source
 extension/background.js  service worker: feed fetch, toolbar launch, re-injection
 extension/options.*      settings page
 extension/palettes/      Omarchy's palettes as JSON, plus index.json
 userscript/header.js     ==UserScript== block, version stamped by the build
 userscript/env.js        Violentmonkey shell: GM storage with seeding, GM XHR
-build.sh                 writes owa-minimal.user.js and dist/owa-minimal-<v>.zip
+build.sh                 writes foresight.user.js and dist/foresight-<v>.zip
 ```
 
 The version lives in `extension/manifest.json`; `./build.sh` stamps it into
 the userscript and runs `node --check` on everything. Edit the sources, never
-`owa-minimal.user.js`.
+`foresight.user.js`.
 
 **Why a content script and not a page script.** The core runs in the
 extension's isolated world. Everything it does is DOM: querying, dispatching
@@ -371,6 +377,17 @@ the hide rule.
 - A Chromium-family browser, or a userscript manager
 - Python 3.11+ for the theme feed (needs `tomllib`), only on Omarchy
 - Node, only to run `./build.sh`
+
+## Name
+
+foresight, all lowercase. A calendar is foresight, and the tagline is the
+pun: a better outlook. Outlook is a trademark of Microsoft; this project is
+independent and not affiliated with Microsoft.
+
+Internal names were not renamed: the DOM attributes (`data-owa-*`), element
+ids (`omarchy-owa-*`), storage keys and the `?omarchy=1` flag are what the
+CSS, `verify-quickadd.js` and existing installs key on, and changing them
+would buy nothing.
 
 ## Licence
 

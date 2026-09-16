@@ -1,4 +1,4 @@
-# Working on owa-minimal
+# Working on foresight
 
 A Chrome extension (and, from the same source, a userscript) that reduces
 Outlook Web to a calendar. It drives someone else's React app through the
@@ -7,11 +7,11 @@ produced a bug that shipped.
 
 ## Layout
 
-The reduction is `extension/core.js`, one function `owaMinimal(env)`. It
+The reduction is `extension/core.js`, one function `foresight(env)`. It
 must not know which shell it runs in: no `chrome.*`, no `GM_*`. Settings,
 the cache and the palette come through `env` (see the header comment there).
 `extension/content.js` is the Chrome shell, `userscript/env.js` the
-Violentmonkey one. `./build.sh` writes `owa-minimal.user.js` and the store
+Violentmonkey one. `./build.sh` writes `foresight.user.js` and the store
 zip; never edit the generated userscript. `./test/smoke.sh` runs both shells
 headlessly against `test/page.html` and must pass before a commit.
 
@@ -21,6 +21,11 @@ and an extension popup all report and a plain tab does not (measured on
 Chromium 152, at document start). The userscript still needs `?omarchy=1`,
 because a userscript cannot ask. Keep the flag path working in the core for
 that reason.
+
+The project was renamed from owa-minimal to foresight in September 2026.
+Internal names (`data-owa-*`, `omarchy-owa-*` ids, storage keys, the
+`?omarchy=1` flag) deliberately kept the old names; do not rename them
+piecemeal.
 
 Chrome skipped the declared content script on 2 of 4 cold launches of an
 app window. `background.js` re-injects after load when the shell's marker

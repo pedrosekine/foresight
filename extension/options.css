@@ -5,6 +5,7 @@ body {
   min-width: 420px; max-width: 560px;
 }
 h1 { font-size: 18px; margin: 0 0 16px; }
+h1 small { font-size: 13px; font-weight: 400; opacity: .7; margin-left: 8px; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; margin: 24px 0 8px; }
 p, ol { margin: 6px 0; }
 label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; }

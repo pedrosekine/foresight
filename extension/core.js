@@ -10,7 +10,7 @@
 //   env.cache.set(key, value)
 //   env.theme()                 Promise<palette | null>; the shell decides
 //                               where the palette comes from
-function owaMinimal(env) {
+function foresight(env) {
   'use strict';
 
   // ---- config ---------------------------------------------------------
@@ -106,7 +106,7 @@ function owaMinimal(env) {
   function whenReady(check, cb, tries = 40) {
     const found = check();
     if (found) return cb(found);
-    if (tries <= 0) return console.warn('[owa-minimal] quick add: timed out');
+    if (tries <= 0) return console.warn('[foresight] quick add: timed out');
     setTimeout(() => whenReady(check, cb, tries - 1), 100);
   }
 
@@ -335,7 +335,7 @@ function owaMinimal(env) {
   function commitAndSave() {
     if (commitInFlight) return;                 // Enter twice must not save twice
     const save = saveButton();
-    if (!save) return console.warn('[owa-minimal] quick add: no Save button');
+    if (!save) return console.warn('[foresight] quick add: no Save button');
     const want = qaRow && qaRow._read && qaRow._read();
     if (!want) { save.click(); return; }        // no fields: nothing to write across
 
@@ -352,7 +352,7 @@ function owaMinimal(env) {
     const giveUp = () => {
       if (finished) return;
       finished = true; commitInFlight = false;
-      console.warn('[owa-minimal] quick add: date did not take, leaving the '
+      console.warn('[foresight] quick add: date did not take, leaving the '
                  + 'compose open rather than saving at the wrong time');
       quickAddActive = false;
       unstripCompose();
@@ -599,7 +599,7 @@ function owaMinimal(env) {
 
   function quickAdd() {
     const newEvent = findControl({ ribbon: 2532, title: 'New event' });
-    if (!newEvent) return console.warn('[owa-minimal] quick add: no New event button');
+    if (!newEvent) return console.warn('[foresight] quick add: no New event button');
     unstripCompose();
     quickAddActive = true;
 
@@ -748,7 +748,7 @@ function owaMinimal(env) {
     }
     const target = ('ribbon' in binding) ? findControl(binding) : navButton(binding.nav);
     if (!target) {
-      console.warn('[owa-minimal] no control for', e.key, '→', binding.title);
+      console.warn('[foresight] no control for', e.key, '→', binding.title);
       return;
     }
     claim();
@@ -1739,7 +1739,7 @@ function owaMinimal(env) {
       b.addEventListener('click', () => {
         const target = findControl(a);
         if (target) target.click();
-        else console.warn('[owa-minimal] control not found:', a.title);
+        else console.warn('[foresight] control not found:', a.title);
       });
       (a.side === 'right' ? rightGroup : leftGroup).appendChild(b);
     }
@@ -1802,7 +1802,7 @@ function owaMinimal(env) {
 // scripts rewrite the URL, into sessionStorage — which is scoped to one tab,
 // so the window keeps it across every in-app navigation and a tab opened
 // normally never has it.
-owaMinimal.flaggedWindow = function () {
+foresight.flaggedWindow = function () {
   const APP_FLAG = 'omarchy';
   const APP_KEY = 'omarchy-owa-app';
   try {

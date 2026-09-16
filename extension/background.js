@@ -27,7 +27,7 @@ async function ensureInjected(tabId) {
   try {
     const [probe] = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => !!globalThis.__owaMinimalShell,
+      func: () => !!globalThis.__foresightShell,
     });
     if (probe && probe.result) return;
     await chrome.scripting.executeScript({

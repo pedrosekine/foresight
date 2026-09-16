@@ -1,12 +1,12 @@
 // ==UserScript==
-// @name         Outlook Web — minimal calendar (Omarchy)
-// @namespace    omarchy
+// @name         foresight — a better outlook (Outlook Web calendar)
+// @namespace    foresight
 // @version      @VERSION@
-// @description  Strips OWA chrome, compresses the day scale, rebuilds a minimal action bar, and retints the whole app to the current Omarchy theme.
+// @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
-// @homepageURL  https://github.com/pedrosekine/owa-minimal
-// @updateURL    http://127.0.0.1:8787/owa-minimal.user.js
-// @downloadURL  http://127.0.0.1:8787/owa-minimal.user.js
+// @homepageURL  https://github.com/pedrosekine/foresight
+// @updateURL    http://127.0.0.1:8787/foresight.user.js
+// @downloadURL  http://127.0.0.1:8787/foresight.user.js
 // @match        https://outlook.office.com/*
 // @match        https://outlook.office365.com/*
 // @match        https://outlook.cloud.microsoft/*
