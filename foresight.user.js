@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.1
+// @version      0.5.2.2
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -114,7 +114,6 @@ function foresight(env) {
     { label: 'New', title: 'New event', primary: true, ribbon: 2532, key: 'n' },
     { label: '\u2039', title: 'Previous', nav: 1, key: 'k' },
     { label: '\u203a', title: 'Next', nav: 2, key: 'j' },
-    { label: '?', title: 'Keys', help: true, key: '?' },
   ];
 
   const findControl = a =>
@@ -949,6 +948,9 @@ function foresight(env) {
       pointer-events: none;
     }
     html[data-owa-minimal] #omarchy-owa-bar { display: flex; }
+
+    #omarchy-owa-keys { display: none; position: fixed; left: 12px; bottom: 12px; z-index: 60; margin: 0; }
+    html[data-owa-minimal][data-owa-pane] #omarchy-owa-keys { display: inline-flex; }
 
     /* The keys dialog, in Today's slots like everything else of ours. */
     #omarchy-owa-help {
@@ -2064,7 +2066,7 @@ function foresight(env) {
       // Inside the calendar, focus is Outlook's business — slot or event.
       if (surface()?.contains(ae)) return;
       // Somewhere else deliberate: our bar, a field, a dialog, the sidebar.
-      if (ae.closest('#omarchy-owa-bar, #omarchy-owa-toggle, input, textarea, '
+      if (ae.closest('#omarchy-owa-bar, #omarchy-owa-toggle, #omarchy-owa-keys, input, textarea, '
                    + '[contenteditable="true"], [role="dialog"], [role="listbox"], '
                    + '[data-app-section="CalendarSurfaceNavigationToolbar"]')) return;
     }
@@ -2508,7 +2510,7 @@ function foresight(env) {
   // from the tab order took away opening one with Enter and deleting it with
   // Delete, which is a capability the reduction has no business costing.
   const PAGE_KEEP = '[role="main"], [data-app-section="CalendarModule"], '
-                  + '#omarchy-owa-bar, #omarchy-owa-toggle, '
+                  + '#omarchy-owa-bar, #omarchy-owa-toggle, #omarchy-owa-keys, '
                   + '[data-app-section="CalendarSurfaceNavigationToolbar"], '
                   + '#omarchy-owa-pane, [data-owa-pane-host]';
   // Throttled: update() runs on every mutation, and this walks every
@@ -2664,7 +2666,6 @@ function foresight(env) {
       b.textContent = a.label;
       b.title = a.key ? `${a.title} (${a.key})` : a.title;
       b.addEventListener('click', () => {
-        if (a.help) { toggleHelp(); return; }
         const target = 'nav' in a ? navButton(a.nav) : findControl(a);
         if (!target) console.warn('[foresight] control not found:', a.title);
         else if ('nav' in a) followSlot(a.nav, () => target.click());
@@ -2673,6 +2674,18 @@ function foresight(env) {
       rightGroup.appendChild(b);
     }
     document.body.appendChild(bar);
+
+    // The keys, findable from the sidebar: a control at its foot whenever
+    // the pane is open. Laid over the pane, not into it — the pane is
+    // Outlook's React tree, and a foreign child there is the kind of thing
+    // that breaks on their next deploy; our own fixed layer cannot.
+    const keys = document.createElement('button');
+    keys.id = 'omarchy-owa-keys';
+    keys.className = 'omarchy-owa-btn';
+    keys.textContent = 'Keys  ?';
+    keys.title = 'Keyboard shortcuts (?)';
+    keys.addEventListener('click', () => toggleHelp());
+    document.body.appendChild(keys);
   }
 
   // ---- wire up --------------------------------------------------------

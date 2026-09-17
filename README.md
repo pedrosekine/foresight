@@ -96,8 +96,8 @@ recolouring.
 |---|---|
 | `☰` | collapsible sidebar — month picker and per-account calendar lists |
 | `2026, September 14–20 ⌄` | the week; click for Outlook's date picker |
-| `Today` `D` `W` `M` `New` `‹` `›` `?` | today, day / week / month views, new event, previous / next, the keys |
-| `?` | the keys, as a dialog; every button's tooltip carries its key too |
+| `Today` `D` `W` `M` `New` `‹` `›` | today, day / week / month views, new event, previous / next |
+| `?` | the keys, as a dialog; also the **Keys** control at the foot of the sidebar, and every button's tooltip carries its key |
 | `Alt+Shift+O` | toggle the full Outlook UI back, for anything the bar doesn't cover |
 | dot, bottom-right | same toggle, for when you've forgotten the shortcut |
 
