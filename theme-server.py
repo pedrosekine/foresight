@@ -8,9 +8,12 @@ wiring: the next poll simply sees the new colours.
 Bound to loopback only. Serves exactly one file's worth of data.
 """
 
+import configparser
 import http.server
 import json
 import os
+import re
+import subprocess
 import time
 import tomllib
 
@@ -30,6 +33,35 @@ PORT = 8787
 STATS = {"theme": 0, "script": 0, "other": 0, "last": None}
 
 
+GTK_INI = os.path.expanduser("~/.config/gtk-3.0/settings.ini")
+FONT_CACHE = {"at": 0.0, "family": ""}
+
+
+def ui_font():
+    """The desktop's UI font family, as GTK apps (and Chromium's own frame)
+    draw it. Measured 2026-09-17: Chromium under Hyprland resolves CSS
+    `system-ui` through fontconfig to Liberation Sans, not to this setting,
+    so the family has to be named to the page explicitly."""
+    now = time.monotonic()
+    if now - FONT_CACHE["at"] < 10:
+        return FONT_CACHE["family"]
+    name = ""
+    try:
+        name = subprocess.run(
+            ["gsettings", "get", "org.gnome.desktop.interface", "font-name"],
+            capture_output=True, text=True, timeout=2).stdout.strip().strip("'\"")
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if not name:
+        cfg = configparser.ConfigParser()
+        cfg.read(GTK_INI)
+        name = cfg.get("Settings", "gtk-font-name", fallback="")
+    # "Adwaita Sans 11", "Inter Medium 10.5": drop the size and a style word.
+    family = re.sub(r"(\s+(Bold|Medium|Light|Regular|Italic))*\s+[\d.]+$", "", name).strip()
+    FONT_CACHE.update(at=now, family=family)
+    return family
+
+
 def palette():
     with open(THEME, "rb") as fh:
         data = tomllib.load(fh)
@@ -37,6 +69,7 @@ def palette():
     return {
         "mode": mode,
         "mtime": int(os.path.getmtime(THEME)),
+        "font": ui_font(),
         "colors": {k: v for k, v in data.items() if isinstance(v, str)},
     }
 

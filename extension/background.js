@@ -3,7 +3,9 @@
 // open the calendar as a chromeless window from the toolbar button, and
 // re-inject the content script when Chrome skipped it.
 
-const CALENDAR_URL = 'https://outlook.cloud.microsoft/calendar/view/workweek';
+const CALENDAR_ORIGIN = 'https://outlook.cloud.microsoft';
+const VIEWS = { workweek: '/calendar/view/workweek', week: '/calendar/view/week',
+                day: '/calendar/view/day', month: '/calendar/view/month', outlook: '/calendar' };
 const CALENDAR_TABS = [
   'https://outlook.cloud.microsoft/calendar/*',
   'https://outlook.office.com/calendar/*',
@@ -66,8 +68,9 @@ chrome.action.onClicked.addListener(async () => {
   // Measured: a popup created this way reports display-mode: standalone,
   // the same as an installed web app, so the content script treats it as
   // the app without any flag in the URL.
+  const { landingView } = await chrome.storage.sync.get('landingView');
   await chrome.windows.create({
-    url: CALENDAR_URL,
+    url: CALENDAR_ORIGIN + (VIEWS[landingView] || VIEWS.week),
     type: 'popup',
     width: 1280,
     height: 900,

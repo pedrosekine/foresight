@@ -35,13 +35,22 @@
 
   // The app is a calendar. An installed Outlook web app starts on mail, so
   // in app mode the mail landing is sent straight on to the calendar —
-  // otherwise the reduction hides the rail that would get you there.
-  // Only the two Outlook landings are redirected; auth hops and deep links
-  // are left alone.
-  if (standalone && settings.landOnCalendar !== false
-      && /^\/(mail(\/.*)?)?\/?$/.test(location.pathname)) {
-    location.replace('/calendar/view/workweek');
-    return;
+  // otherwise the reduction hides the rail that would get you there. And
+  // the view it lands on is a setting: an app installed from any calendar
+  // URL opens on whatever view that URL named, so the first load of a
+  // window is sent to the chosen view instead. Only the first: after that
+  // the URL is the user's, changing as they switch views. Auth hops and
+  // deep links to an event are left alone. "outlook" leaves the view to
+  // Outlook's own default, the plain /calendar route.
+  if (standalone && settings.landOnCalendar !== false && foresight.firstLoad()) {
+    const want = foresight.landingPath(settings.landingView);
+    const path = location.pathname.replace(/\/$/, '');
+    const onMail = /^(\/mail(\/.*)?)?$/.test(path);
+    const onView = /^\/calendar(\/view\/[a-z]+)?$/.test(path);
+    if (onMail || (onView && path !== want && settings.landingView !== 'outlook')) {
+      location.replace(want);
+      return;
+    }
   }
 
   const DEFAULT_FEED = 'http://127.0.0.1:8787/theme.json';
@@ -70,7 +79,20 @@
       if (source === 'none') return null;
       if (source === 'feed') {
         const url = settings.themeUrl || DEFAULT_FEED;
-        const res = await chrome.runtime.sendMessage({ type: 'fetch-theme', url });
+        let res;
+        try {
+          res = await chrome.runtime.sendMessage({ type: 'fetch-theme', url });
+        } catch (e) {
+          // Reloading or updating the extension cuts every open window off
+          // from it: this call throws from then on and the theme silently
+          // stops following. Measured 2026-09-16, three times in one
+          // afternoon. The only way back is a fresh document, so reload —
+          // but not over an open compose, where it would lose what is typed.
+          if (!chrome.runtime?.id && !document.querySelector('[id^="EVENT_CalendarCompose"]')) {
+            location.reload();
+          }
+          return null;
+        }
         return res && res.ok ? res.data : null;
       }
       // A bundled palette. Its identity is the version, so `mtime` only

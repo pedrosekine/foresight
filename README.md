@@ -1,7 +1,7 @@
 # foresight
 
 **A better outlook.** Outlook on the web, reduced to a calm, keyboard-driven
-calendar, as a Chrome extension. Optionally tinted to match your Omarchy theme.
+calendar, as a Chrome extension. Optionally coloured entirely by your Omarchy theme.
 
 Chrome extensions are one of the few things people in a managed workplace
 still get to choose. This one is for anyone whose employer left them Outlook
@@ -61,6 +61,7 @@ is what the local update server serves.
 
 ```bash
 omarchy-webapp-install "Calendar" "https://outlook.cloud.microsoft/calendar/view/workweek?omarchy=1" "calendar"
+# any of /calendar/view/day, week, workweek, month, or plain /calendar for Outlook's own default
 ```
 
 A userscript cannot ask the browser which kind of window it is in, so the
@@ -82,7 +83,7 @@ and run:
 ```
 
 It installs a user service that serves your current palette on
-`127.0.0.1:8787`. The extension polls it and retints OWA to match. Switch
+`127.0.0.1:8787`. The extension polls it and recolours OWA to match. Switch
 themes and the calendar follows within a few seconds, no relogin, no reload.
 Chrome asks once for permission to reach `127.0.0.1` when you pick that option.
 
@@ -107,6 +108,7 @@ recolouring.
 | `t` | today |
 | `d` / `w` / `m` | day / week / month view |
 | `j` / `k` | next / previous period (vim direction) |
+| `Ctrl+→` / `Ctrl+←` | the same, for hands on the arrows |
 | `s` | show / hide the calendars sidebar |
 | `Space` | walk the events on the day you are looking at |
 | `Tab` | rotate: bar → slot → nearest event → bar |
@@ -120,6 +122,14 @@ recolouring.
 
 Everything else on the page is out of the tab order, so the next press is
 always predictable and the bar is never more than two away.
+
+**There is always a selected slot.** Outlook creates none on load and drops
+it after Today, Next or Previous, which would leave the arrow keys, Space and
+`c` dead until you clicked the grid. So the extension selects one itself: the
+current half hour on today when the app opens or after `t`, and the same
+column and time in the new week after `j` / `k`. It does this with the same
+click Outlook expects from a mouse, then reads the slot's label back to check
+where it landed.
 
 The arrow keys move the selected slot. Tab from there grabs the event
 **nearest where you are** — not the first of the day — and with one focused,
@@ -185,6 +195,9 @@ change them and sync with your Chrome profile.
 | Feed URL | `http://127.0.0.1:8787/theme.json` | where the feed is |
 | Also apply in normal browser tabs | off | reduce every Outlook tab, not just the app |
 | Start on the calendar | on | an installed Outlook app opens on mail; send it on |
+| View to open on | week | day, week, work week, month, or Outlook's own default; applied on the window's first load, however the app was installed |
+| Past events fade to | 55% | past events keep their colours and fade instead |
+| Font | desktop font | the desktop's UI font as the theme feed reports it (GTK's font setting), or a family you name; without the feed, `system-ui` |
 
 Userscript: Violentmonkey's script editor has a **Values** tab with
 `hoursVisible`, `startHour`, `themeUrl` and `themePollMs`. Edited values are
@@ -272,21 +285,30 @@ identical in every locale — `aria-label` is translated.
 fixed-height 24-hour column. Shrink the column and every event follows exactly.
 The column is found by its inline height rather than a class name.
 
-**Theming** remaps colours by role rather than by token name, because OWA runs
-two token systems at once — Fluent v9 (`--colorNeutral*`) and older Fabric slots
-(`--neutralPrimary`, `--white`, `--themePrimary`). Greys are projected onto the
-palette's neutral ramp by luminance; brand blues take the accent's hue at their
-own lightness; everything else is left alone, so status colours and your event
-categories survive. A few hundred rules bake colours in as literals rather than
-referencing a token, so those get re-emitted as overrides against the same
-selectors.
+**Theming** gives the palette every colour, whatever mode Outlook is in. Each
+colour Outlook uses is placed on a scale from "as far as its background" to "as
+far as its text" and re-issued at the same position on the palette's scale, so
+a dark palette makes a light Outlook dark and a light one makes it light. Greys
+land on the palette's neutral ramp, brand blues on the accent, every other hue
+on the palette's nearest named colour (red, yellow, green, ...), and colours
+that sat near Outlook's background become tinted surfaces rather than
+full-strength hues. That is how Omarchy's own app templates assign roles:
+accent text is the background colour, status colours pair with the background,
+raised surfaces come from `lighter_background`, borders from `muted`.
 
-**Light themes won't make OWA light.** The mapping is monotonic in luminance,
-which keeps every contrast relationship OWA already had. Inverting it does make
-the app follow the theme's mode, but wrecks legibility against event category
-colours — which are deliberately left untouched. Set OWA's own Appearance to
-match your theme's mode instead. `INVERT_ON_MODE_MISMATCH` is there if you want
-to try it anyway.
+It has to run three passes, because Outlook colours things three ways: custom
+properties (two token systems at once, Fluent v9 and the older Fabric slots),
+a few hundred rules with colours baked in as literals, and inline styles that
+React sets on elements as they render. Event chips are the last kind. They are
+recoloured as they appear, the original is remembered per element so a
+re-render never maps a colour twice, and they follow the rule Omarchy's own
+templates use: a named colour is ink, never a fill. The block is the background
+pulled a third of the way towards the colour, the text and the edge are the
+colour at full strength. Every named colour in an Omarchy palette is designed
+to hold WCAG AA against that background, so the pair is readable by
+construction, and it is checked anyway: under 4.5:1 the block moves closer to
+the background, and failing that the text falls back to the foreground.
+Colour dots smaller than a swatch keep the full colour.
 
 **Quick add drives the real compose.** Outlook's date row is a
 `<div role="button">`, not a field, so it can't be typed into — but clicking it

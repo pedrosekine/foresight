@@ -11,6 +11,9 @@
     themeUrl: 'http://127.0.0.1:8787/theme.json',
     applyInTabs: false,
     landOnCalendar: true,
+    landingView: 'week',
+    pastOpacity: 55,
+    font: '',
   };
   const FEED_ORIGINS = ['http://127.0.0.1/*', 'http://localhost/*'];
 
@@ -32,10 +35,13 @@
   function render() {
     $('hoursVisible').value = stored.hoursVisible ?? '';
     $('startHour').value = stored.startHour ?? '';
+    $('pastOpacity').value = stored.pastOpacity ?? '';
+    $('font').value = stored.font ?? '';
     $('themeSource').value = current('themeSource');
     $('themeUrl').value = stored.themeUrl ?? '';
     $('applyInTabs').checked = !!current('applyInTabs');
     $('landOnCalendar').checked = current('landOnCalendar') !== false;
+    $('landingView').value = current('landingView');
     $('feedRow').hidden = current('themeSource') !== 'feed';
   }
   render();
@@ -61,9 +67,12 @@
   };
   $('hoursVisible').addEventListener('change', number('hoursVisible', 4, 24));
   $('startHour').addEventListener('change', number('startHour', 0, 23));
+  $('pastOpacity').addEventListener('change', number('pastOpacity', 10, 100));
+  $('font').addEventListener('change', e => save('font', e.target.value.trim()));
 
   $('applyInTabs').addEventListener('change', e => save('applyInTabs', e.target.checked));
   $('landOnCalendar').addEventListener('change', e => save('landOnCalendar', e.target.checked));
+  $('landingView').addEventListener('change', e => save('landingView', e.target.value));
 
   // The feed lives on localhost, which is an optional host permission: ask
   // for it the moment the feed is chosen, while we still have the click.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      5.0.0
+// @version      0.5.1.11
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -44,12 +44,25 @@ function foresight(env) {
     hoursVisible: 14,                                 // hours on screen at once
     startHour: 6,                                     // where the grid sits on load
     themePollMs: 3000,
+    pastOpacity: 55,                                  // past events fade to this %
+    font: '',                                         // '' = the system UI font
   };
   const setting = key => env.setting(key, DEFAULTS[key]);
 
   const HOURS_VISIBLE = setting('hoursVisible');
   const START_HOUR = setting('startHour');
   const THEME_POLL_MS = setting('themePollMs');
+  const PAST_OPACITY = Math.min(Math.max(setting('pastOpacity'), 10), 100) / 100;
+  // A family named in the settings wins; otherwise the desktop's UI font as
+  // the theme feed reports it (GTK's font-name, which Omarchy sets); and
+  // failing both, system-ui. Measured 2026-09-17: Chromium under Hyprland
+  // resolves system-ui through fontconfig to Liberation Sans, not to the
+  // GTK setting, so the desktop's family has to be spelled out.
+  const FONT_SETTING = String(setting('font') || '').trim().replace(/"/g, '');
+  const fontStack = feed => {
+    const named = FONT_SETTING || String(feed || '').trim().replace(/"/g, '');
+    return named ? `"${named}", system-ui, sans-serif` : 'system-ui, sans-serif';
+  };
 
   const HOTKEY = e => e.altKey && e.shiftKey && (e.key === 'O' || e.key === 'o');
 
@@ -59,20 +72,13 @@ function foresight(env) {
   // a syntax error, so nothing catches it until the feature quietly stops.
   const PALETTE_KEY = '_palette';
   const CSS_KEY = '_themeCss';
+  const CSS_ALGO = 3;   // bump when the mapping changes, so stale cached CSS is not painted
 
   // Before OWA has rendered a single pixel. `sheet()` falls back to
   // documentElement when there is no <head> yet, which at document-start
   // there is not.
   injectCachedCss();
 
-  // When the Omarchy theme's mode differs from the one OWA is rendering,
-  // flipping luminance makes the app follow the mode — but it also breaks
-  // contrast against event category colours, which are deliberately left
-  // alone, and those chips become unreadable. Mapping monotonically instead
-  // preserves every contrast relationship OWA already had; the app keeps
-  // OWA's light/dark but takes the palette's hues. For a real light/dark
-  // switch, change OWA's own Appearance setting to match your theme.
-  const INVERT_ON_MODE_MISMATCH = false;
 
   const q = s => document.querySelector(s);
 
@@ -283,6 +289,7 @@ function foresight(env) {
       };
       input.addEventListener('blur', commit);
       input.addEventListener('keydown', e => { if (e.key === 'Tab') commit(); });
+      input._commit = commit;   // onComposeEnter commits before it saves
       // Select on arrival, so tabbing in and typing overwrites rather than
       // inserting into whatever is already there. These fields are only ever
       // replaced wholesale — nobody edits one digit of a date — and a caret
@@ -375,11 +382,14 @@ function foresight(env) {
       const slot = currentSlot();
       return slot.date === want.date && slot.start === want.start;
     };
+    let picked = false;
     const giveUp = () => {
       if (finished) return;
       finished = true; commitInFlight = false;
+      const slot = currentSlot();
       console.warn('[foresight] quick add: date did not take, leaving the '
-                 + 'compose open rather than saving at the wrong time');
+                 + 'compose open rather than saving at the wrong time.',
+                 { wanted: want, outlookHas: slot, pickerFound: picked });
       quickAddActive = false;
       unstripCompose();
     };
@@ -388,6 +398,7 @@ function foresight(env) {
       if (!landed()) return giveUp();
       finished = true; commitInFlight = false;
       root.removeAttribute('data-owa-committing');
+      console.info('[foresight] quick add: saving', want.date, want.start + '–' + want.end);
       (saveButton() || save).click();
     };
     setTimeout(done, 4000);                     // never wedge mid-commit
@@ -412,6 +423,7 @@ function foresight(env) {
 
     requestAnimationFrame(() => requestAnimationFrame(() => pointerClick(row)));
     whenReady(pick, () => {
+      picked = true;
       // Re-read before each write: committing one field re-renders the row
       // and replaces the other two. Start before end, because moving the
       // start drags the end along.
@@ -611,6 +623,10 @@ function foresight(env) {
     qaRow = null;
     root.removeAttribute('data-owa-quickadd');
     root.removeAttribute('data-owa-quickadd-pending');
+    // The commit blanks the modal and only the success path used to unblank
+    // it, so an abandoned save left an invisible compose behind — and every
+    // compose opened after it, since nothing else ever cleared the flag.
+    root.removeAttribute('data-owa-committing');
     for (const attr of MARKERS) {
       for (const el of document.querySelectorAll(`[${attr}]`)) el.removeAttribute(attr);
     }
@@ -624,6 +640,18 @@ function foresight(env) {
   let quickAddActive = false;
 
   function quickAdd() {
+    // With no slot Outlook prefills the *next* half hour; with one it
+    // prefills the slot. Select the current half hour first, then open.
+    if (!gridSlot() && !slotBusy && q('.inDayScrollContainer')) {
+      slotBusy = true;
+      placeSlot(targetDate() || localDate(), nowBlock())
+        .finally(() => { slotBusy = false; openQuickAdd(); });
+      return;
+    }
+    openQuickAdd();
+  }
+
+  function openQuickAdd() {
     const newEvent = findControl({ ribbon: 2532, title: 'New event' });
     if (!newEvent) return console.warn('[foresight] quick add: no New event button');
     unstripCompose();
@@ -697,14 +725,19 @@ function foresight(env) {
     // focus to be inside the modal looked safer but silently did nothing
     // whenever focus had drifted out, which Tab could cause on its own.
     if (!quickAddActive || !composeOpen()) return;
-    // Only from the title or Save, so a stray Enter elsewhere in the
-    // modal cannot file a half-finished event.
+    // From the title, our own fields, or Save — every stop in the box.
+    // Anywhere else in the modal is left alone, so a stray Enter cannot
+    // file a half-finished event.
     const t = e.target;
     const fromTitle = t && t.closest && t.closest('[id$="_SUBJECT"]');
+    const fromField = t && t.closest && t.closest('#omarchy-qa-row');
     const fromSave = t && t.hasAttribute && t.hasAttribute('data-owa-savebtn');
-    if (!fromTitle && !fromSave) return;
+    if (!fromTitle && !fromField && !fromSave) return;
     e.preventDefault();
     e.stopPropagation();
+    // A field commits on Tab or blur; Enter has to do the same first, or
+    // the start time lands without dragging the end along.
+    if (fromField && t._commit) t._commit();
     commitAndSave();
   }
 
@@ -736,9 +769,14 @@ function foresight(env) {
     || [...document.querySelectorAll('[role="dialog"]')].some(isVisible);
 
   function onShortcut(e) {
-    if (e.ctrlKey || e.altKey || e.metaKey) return;  // leave OWA's own bindings alone
+    if (e.altKey || e.metaKey) return;               // leave OWA's own bindings alone
     if (isTyping(e.target) || overlayOpen()) return;
-    const binding = SHORTCUTS[e.key.toLowerCase()];
+    // Ctrl+←/→ are k/j for hands that live on the arrows. Any other Ctrl
+    // combination is Outlook's. Inside a field Ctrl+arrow is still
+    // word-jump, because typing bailed out above.
+    const binding = e.ctrlKey
+      ? (e.shiftKey ? null : { ArrowLeft: SHORTCUTS.k, ArrowRight: SHORTCUTS.j }[e.key])
+      : SHORTCUTS[e.key.toLowerCase()];
     if (!binding) return;
 
     // Outlook has to be stopped from seeing the key at all, not merely from
@@ -778,7 +816,8 @@ function foresight(env) {
       return;
     }
     claim();
-    target.click();
+    if ('nav' in binding) followSlot(binding.nav, () => target.click());
+    else target.click();
   }
 
   // Elements carrying the full-day column height are found by their inline
@@ -878,10 +917,19 @@ function foresight(env) {
        shifts by the pane's width so New keeps sitting beside Today. */
     #omarchy-owa-left { margin-left: var(--owa-pane-width, 0px); }
 
-    /* Every control uses Fluent's default button — the same fill, stroke,
-       radius and metrics as Today. Values are adopted from the live
-       toolbar at runtime so this tracks whatever theme OWA is rendering;
-       the fallbacks only apply if that lookup fails. */
+    /* Every control is drawn like Today. Today is a Fabric button whose
+       colours are all slot references (measured 2026-09-17 from its own
+       rules: --neutralPrimarySurface on --neutralPrimary, a 1px
+       --neutralTertiaryAlt stroke, --neutralQuaternaryAlt on hover,
+       --neutralTertiaryAlt when pressed), so the bar references the same
+       slots and changes in the same frame Today does. An earlier version
+       copied Today's *computed* colours on each DOM update, and a palette
+       change rewrites a <style> in the head, which is no DOM update — so
+       the bar kept the colours Today had mid-switch, rgb(206,227,233)
+       beside Today's rgb(240,238,233), until something unrelated moved.
+       The copied values remain only as fallbacks for a page where the
+       slots are not defined at the body. Metrics are still adopted from
+       Today, since those do not change with the theme. */
     .omarchy-owa-btn {
       display: inline-flex; align-items: center; justify-content: center;
       height: 32px; min-width: 40px; padding: 0 14px; margin: 8px 4px;
@@ -889,16 +937,19 @@ function foresight(env) {
       font-size: var(--owa-btn-size, 14px);
       font-weight: var(--owa-btn-weight, 400); line-height: normal; text-align: center;
       border-radius: var(--owa-btn-radius, 4px); cursor: pointer;
-      color: var(--owa-btn-fg, currentColor);
-      background: var(--owa-btn-bg, transparent);
-      border: 1px solid var(--owa-btn-stroke, color-mix(in srgb, currentColor 30%, transparent));
+      color: var(--neutralPrimary, var(--owa-btn-fg, currentColor));
+      background: var(--neutralPrimarySurface, var(--owa-btn-bg, transparent));
+      border: 1px solid var(--neutralTertiaryAlt, var(--owa-btn-stroke, color-mix(in srgb, currentColor 30%, transparent)));
     }
     .omarchy-owa-btn { pointer-events: auto; }
     #omarchy-owa-start > .omarchy-owa-btn:first-child { margin-left: 12px; }
     #omarchy-owa-right .omarchy-owa-btn:last-child { margin-right: 12px; }
     .omarchy-owa-btn.primary { padding: 0 16px; }
     .omarchy-owa-btn:hover {
-      background: color-mix(in srgb, var(--owa-btn-bg, transparent) 88%, var(--owa-btn-fg, currentColor));
+      background: var(--neutralQuaternaryAlt, color-mix(in srgb, var(--owa-btn-bg, transparent) 88%, var(--owa-btn-fg, currentColor)));
+    }
+    .omarchy-owa-btn:active {
+      background: var(--neutralTertiaryAlt, color-mix(in srgb, var(--owa-btn-bg, transparent) 80%, var(--owa-btn-fg, currentColor)));
     }
 
     /* Quick add strips the compose down to title + date. The rows to drop
@@ -948,13 +999,13 @@ function foresight(env) {
     #omarchy-qa-row input {
       font-family: var(--owa-btn-family, inherit);
       font-size: var(--owa-btn-size, 14px);
-      color: var(--owa-btn-fg, currentColor);
+      color: var(--neutralPrimary, var(--owa-btn-fg, currentColor));
       background: transparent;
-      border: 0; border-bottom: 1px solid var(--owa-btn-stroke, currentColor);
+      border: 0; border-bottom: 1px solid var(--neutralTertiaryAlt, var(--owa-btn-stroke, currentColor));
       border-radius: 0; padding: 6px 2px; outline: none;
     }
     #omarchy-qa-row input:focus-visible {
-      border-bottom-color: var(--owa-btn-fg, currentColor);
+      border-bottom-color: var(--neutralPrimary, var(--owa-btn-fg, currentColor));
       border-bottom-width: 2px; padding-bottom: 5px;
     }
     /* Sized to their content: text inputs otherwise take the browser's
@@ -988,6 +1039,24 @@ function foresight(env) {
       padding: 0 !important; margin: 0 !important;
       overflow: visible !important; background: none !important; border: none !important;
     }
+    /* Outlook's toolbar row is a child of the bar, so collapsing the bar
+       alone leaves it painting 40px of white and shadow across the modal,
+       behind the card — and Fluent mounts overflow menu buttons into it
+       once the modal has shrunk, after the hide pass ran, so they escaped
+       it. Measured 2026-09-16: Toolbar 360x40 at y=48 with two late menu
+       buttons. So everything in the bar that is not Save, inside Save, or
+       on the way down to Save is hidden here, and the way down is
+       flattened. CSS, not the pass, because it holds across re-renders. */
+    html[data-owa-quickadd] [data-owa-savebar]
+      *:not([data-owa-savebtn]):not([data-owa-savebtn] *):not(:has([data-owa-savebtn])) {
+      display: none !important;
+    }
+    html[data-owa-quickadd] [data-owa-savebar] :has([data-owa-savebtn]) {
+      height: 0 !important; min-height: 0 !important;
+      padding: 0 !important; margin: 0 !important;
+      background: none !important; box-shadow: none !important; border: none !important;
+      overflow: visible !important;
+    }
     html[data-owa-quickadd] [data-owa-savebtn] {
       position: absolute !important; right: 16px !important; bottom: 14px !important;
       z-index: 5 !important;
@@ -1002,6 +1071,56 @@ function foresight(env) {
       opacity: 0 !important;
       transition: none !important;
     }
+
+    /* The desktop's font instead of Segoe. Fluent reads its family from a
+       token, so the token is overridden like the colour tokens are; the
+       older Fabric controls name the family in their own rules, so those
+       are covered by the element rule. Icon fonts are glyphs and must keep
+       their family: every icon Outlook draws is an <i>, an "Icon" class or
+       a data-icon-name, and those are excluded. */
+    html[data-owa-minimal], html[data-owa-minimal] body,
+    html[data-owa-minimal] [class*="fui-FluentProvider"] {
+      --fontFamilyBase: var(--owa-font) !important;
+      --fontFamilyNumeric: var(--owa-font) !important;
+    }
+    html[data-owa-minimal] :not(i):not([class*="Icon"]):not([data-icon-name]):not(svg):not(svg *) {
+      font-family: var(--owa-font) !important;
+    }
+
+    /* Column headers: "Thu 17" on one line, centred, sitting at the bottom
+       of the header. dressHeaders tags the two leaves and shortens the
+       weekday from the column's own date, in the page's language. The
+       wrappers between the header and its two leaves go to display: contents
+       so the leaves are the flex items — only those wrappers: the header
+       also holds the work-plan pill, and unwrapping every descendant
+       overrode the display: none that hides it (measured 2026-09-17,
+       "September 14, My work plan:" appeared in every header). wrap +
+       align-content is what puts a baseline-aligned line at the bottom of
+       the box. Today's number is set on the accent, as the selection block
+       is, instead of bold. */
+    html[data-owa-minimal] [data-column-date] {
+      display: flex !important; flex-flow: row wrap !important;
+      justify-content: center !important; align-content: flex-end !important;
+      align-items: baseline !important; column-gap: 0.4em !important;
+      height: 100% !important; box-sizing: border-box !important;
+      padding-bottom: 0.3em !important;
+    }
+    html[data-owa-minimal] [data-column-date] :has([data-owa-daynum], [data-owa-weekday]) {
+      display: contents !important;
+    }
+    html[data-owa-minimal] [data-owa-weekday] { order: -1; font-size: 14px !important; }
+    html[data-owa-minimal] [data-owa-daynum] { font-size: 16px !important; font-weight: 500 !important; }
+    html[data-owa-minimal] [data-owa-daynum][data-owa-today] {
+      background: var(--owa-accent) !important; color: var(--owa-on-accent) !important;
+      border-radius: 0.3em; padding: 0 0.3em; line-height: 1.25;
+    }
+
+    /* Past events fade rather than change colour. Marked by markPast from
+       the event's column and its label's end time. */
+    html[data-owa-minimal] [data-owa-past] { opacity: var(--owa-past-opacity) !important; }
+
+    /* Text on a recoloured chip, chosen by contrast in mapInline. */
+    [data-owa-chip], [data-owa-chip] * { color: var(--owa-chip-fg) !important; }
 
     #omarchy-owa-toggle {
       position: fixed; right: 6px; bottom: 6px; z-index: 2147483647;
@@ -1062,35 +1181,62 @@ function foresight(env) {
   };
 
   // ---- theme engine ---------------------------------------------------
+  // The palette owns the colours; OWA's own light or dark mode is only the
+  // input scale. Every colour OWA uses is placed on a scale from "as far as
+  // its background" to "as far as its text" and re-issued at the same
+  // position on the palette's scale, whichever mode either of them is in.
+  // Neutrals land on the palette's neutral ramp, brand blues on the accent,
+  // any other hue on the palette's nearest named colour (red, yellow, green,
+  // ...), and colours that sit near OWA's background become tinted surfaces
+  // rather than full-strength hues — the way Omarchy's own app templates
+  // assign roles: accent text is the background colour, status colours pair
+  // with the background, raised surfaces come from lighter_background,
+  // borders from muted.
+  //
   // OWA runs two token systems side by side — Fluent v9 (--colorNeutral*)
   // and the older Fabric slots (--neutralPrimary, --white, --themePrimary).
   // Rather than enumerate either, every custom property whose value parses
-  // as a colour is considered. Greys are projected onto the Omarchy neutral
-  // ramp by luminance and brand blues take the accent's hue at their own
-  // lightness, which leaves semantic colours — status reds/greens and your
-  // event categories — untouched.
-  const RAMP_KEYS = ['darker_background', 'dark_background', 'background', 'selection',
-    'lighter_background', 'muted', 'dark_foreground', 'foreground',
-    'light_foreground', 'bright_foreground'];
+  // as a colour is mapped, then every literal colour in its stylesheets,
+  // then every inline colour it sets on elements as they render.
+  //
+  // Measured 2026-09-16 before this: mapping monotonically (keeping OWA's
+  // order of light and dark) with a handful of tokens pinned to the palette
+  // gave a dark toolbar over a light grid the moment the palette's mode
+  // differed from OWA's. Imposing the palette's mode and recolouring the
+  // event chips too is what makes the result one thing instead of two.
+  const RAMP_KEYS = ['background', 'lighter_background', 'selection', 'muted',
+    'dark_foreground', 'light_foreground', 'foreground', 'bright_foreground'];
+  const HUE_KEYS = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'magenta'];
 
-  // The handful of tokens that decide how the app reads at a glance; a pure
-  // luminance projection lands near these but not exactly on them.
+  // Tokens that decide how the app reads at a glance; the projection lands
+  // near these but not exactly on them.
   const ANCHORS = {
     NeutralBackground1: 'background', NeutralBackground1Hover: 'lighter_background',
-    NeutralBackground1Selected: 'selection', NeutralBackground2: 'dark_background',
+    NeutralBackground1Pressed: 'selection', NeutralBackground1Selected: 'selection',
+    NeutralBackground2: 'dark_background',
     NeutralBackground3: 'darker_background', NeutralBackground4: 'darker_background',
     NeutralBackground5: 'darker_background', NeutralBackground6: 'lighter_background',
-    NeutralForeground1: 'bright_foreground', NeutralForeground2: 'foreground',
-    NeutralForeground3: 'foreground', NeutralForeground4: 'dark_foreground',
-    NeutralStroke1: 'muted', NeutralStroke2: 'selection', NeutralStroke3: 'selection',
-    BrandBackground: 'accent', BrandForeground1: 'accent',
+    NeutralForeground1: 'foreground', NeutralForeground2: 'foreground',
+    NeutralForeground3: 'light_foreground', NeutralForeground4: 'dark_foreground',
+    NeutralForegroundDisabled: 'dark_foreground',
+    NeutralStroke1: 'muted', NeutralStroke2: 'selection', NeutralStroke3: 'lighter_background',
+    NeutralStrokeAccessible: 'light_foreground',
+    BrandBackground: 'accent', BrandForeground1: 'accent', BrandForeground2: 'accent',
+    BrandForegroundLink: 'blue', BrandStroke1: 'accent',
     CompoundBrandBackground: 'accent', CompoundBrandStroke: 'accent',
+    CompoundBrandForeground1: 'accent',
     NeutralForegroundOnBrand: 'background',
+    StrokeFocus2: 'accent', NeutralStrokeFocus2: 'accent',
   };
 
   const COLOUR_PROPS = ['color', 'background-color', 'border-color', 'border-top-color',
     'border-right-color', 'border-bottom-color', 'border-left-color', 'fill', 'stroke',
     'outline-color', 'caret-color', 'text-decoration-color', 'column-rule-color'];
+  // Properties whose colour is something drawn *on* a surface rather than
+  // the surface itself. These take the full-strength palette colour.
+  const INK_PROPS = new Set(['color', 'fill', 'stroke', 'caret-color', 'text-decoration-color',
+    'border-color', 'border-top-color', 'border-right-color', 'border-bottom-color',
+    'border-left-color', 'outline-color', 'column-rule-color']);
 
   let snapshot = null;   // pristine token values, captured once
   let lastMtime = null;
@@ -1127,49 +1273,145 @@ function foresight(env) {
     }
   }
 
+  // WCAG relative luminance and contrast ratio, for choices that have to be
+  // readable rather than merely consistent.
+  const relLum = ([r, g, b]) => {
+    const f = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  const contrast = (a, b) => {
+    const [x, y] = [relLum(a), relLum(b)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+  const mix = (a, b, f) => [0, 1, 2].map(k => a[k] + (b[k] - a[k]) * f);
+
   function makeMapper(palette) {
     const C = palette.colors;
-    const ramp = RAMP_KEYS.map(k => C[k]).filter(Boolean).map(hex).filter(Boolean)
-      .sort((a, b) => lum(a) - lum(b));
+    const col = k => hex(C[k] || '');
+    const bg = col('background'), fg = col('foreground');
+    if (!bg || !fg) return null;
+
+    // The neutral ramp, walked from the palette's background to its text.
+    // Sorted by luminance and then oriented so the background end is first;
+    // a light palette runs the other way round from a dark one.
+    let ramp = RAMP_KEYS.map(col).filter(Boolean).sort((a, b) => lum(a) - lum(b));
     if (ramp.length < 2) return null;
-    const lo = lum(ramp[0]), hi = lum(ramp[ramp.length - 1]);
-    const project = L => {
-      const t = lo + (hi - lo) * Math.min(Math.max(L, 0), 1);
+    if (Math.abs(lum(ramp[ramp.length - 1]) - lum(bg)) < Math.abs(lum(ramp[0]) - lum(bg))) ramp.reverse();
+    const span = Math.abs(lum(ramp[ramp.length - 1]) - lum(ramp[0])) || 1;
+    const pos = ramp.map(c => Math.abs(lum(c) - lum(ramp[0])) / span);
+    const alongRamp = t => {
+      t = Math.min(Math.max(t, 0), 1);
       for (let i = 1; i < ramp.length; i++) {
-        const a = ramp[i - 1], b = ramp[i], la = lum(a), lb = lum(b);
-        if (t <= lb || i === ramp.length - 1) {
-          const f = lb === la ? 0 : (t - la) / (lb - la);
-          return [0, 1, 2].map(k => a[k] + (b[k] - a[k]) * Math.min(Math.max(f, 0), 1));
+        if (t <= pos[i] || i === ramp.length - 1) {
+          const f = pos[i] === pos[i - 1] ? 0 : (t - pos[i - 1]) / (pos[i] - pos[i - 1]);
+          return mix(ramp[i - 1], ramp[i], Math.min(Math.max(f, 0), 1));
         }
       }
     };
-    const accent = hex(C.accent) || ramp[ramp.length - 1];
-    const aH = toHsl(accent);
-    const brandish = rgb => { const [h, s] = toHsl(rgb); return s > 0.35 && h > 0.5 && h < 0.68; };
+    // Absolute luminance order, for translucent overlays: a black scrim
+    // has to stay a dark scrim whatever mode the palette is in. The ends
+    // are taken by luminance, not by name — darker_background and
+    // bright_foreground are mode-relative, and in a light palette the
+    // "bright" foreground is the darkest colour there is. Measured
+    // 2026-09-17: a near-white rgba(253,247,246,0.9) chip came out as
+    // rgba(43,44,48,0.9), the light palette's text colour.
+    const byLum = [...ramp, col('darker_background'), col('bright_foreground')]
+      .filter(Boolean).sort((a, b) => lum(a) - lum(b));
+    const darkest = byLum[0];
+    const lightest = byLum[byLum.length - 1];
 
-    const owaDark = lum(parseColour(snapshot['--colorNeutralBackground1']).rgb) < 0.5;
-    const invert = INVERT_ON_MODE_MISMATCH && (palette.mode === 'dark') !== owaDark;
-    const adj = L => invert ? 1 - L : L;
+    // Where a colour sits between OWA's own background and text.
+    const owaBg = parseColour(snapshot['--colorNeutralBackground1']);
+    const owaFg = parseColour(snapshot['--colorNeutralForeground1']);
+    const Lbg = owaBg ? lum(owaBg.rgb) : 1;
+    const Lfg = owaFg ? lum(owaFg.rgb) : (Lbg > 0.5 ? 0.14 : 1);
+    const rel = L => Math.min(Math.max((L - Lbg) / (Lfg - Lbg), 0), 1);
+    const SURFACE = 0.35;   // closer to the background than this: a tinted surface, not ink
+
+    const accent = col('accent') || fg;
+    const hues = HUE_KEYS.map(k => ({ k, rgb: col(k) })).filter(h => h.rgb)
+      .map(h => ({ ...h, h: toHsl(h.rgb)[0] }));
+    const nearestHue = rgb => {
+      const h = toHsl(rgb)[0];
+      let best = null, d0 = 2;
+      for (const c of hues) {
+        const d = Math.min(Math.abs(c.h - h), 1 - Math.abs(c.h - h));
+        if (d < d0) { d0 = d; best = c.rgb; }
+      }
+      return best || accent;
+    };
+    const brandish = rgb => { const [h, s] = toHsl(rgb); return s > 0.35 && h > 0.5 && h < 0.68; };
+    const grey = rgb => isGrey(rgb) || toHsl(rgb)[1] < 0.12;
 
     // Fluent's primary accent appears verbatim in tokens, in the Fabric
     // slots (--themePrimary) and in baked-in rules alike — day numbers, the
-    // now-line, the selection block. Those should land on the palette accent
-    // exactly. Sending them through the hue/saturation path instead lands a
-    // shade off, because that path deliberately preserves the source's own
-    // lightness, and Fluent's accent is darker than most palette accents.
-    // Read from the snapshot rather than hardcoded, so it stays correct if
-    // Microsoft changes the shade.
+    // now-line, the selection block. Those land on the palette accent
+    // exactly.
     const brandRef = parseColour(snapshot['--colorBrandForeground1'] || '');
     const same = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 
-    return v => {
+    // A tinted surface: the palette background pulled a little towards the
+    // hue, which is how Omarchy's templates build errorSurface and friends.
+    const surface = hue => mix(bg, hue, 0.3);
+
+    const map = (v, prop) => {
       const c = parseColour(v);
       if (!c) return null;
-      if (isGrey(c.rgb)) return fmt(project(adj(lum(c.rgb))), c.a);
-      if (brandRef && same(c.rgb, brandRef.rgb)) return fmt(accent, c.a);
-      if (brandish(c.rgb)) return fmt(toRgb([aH[0], aH[1], adj(toHsl(c.rgb)[2])]), c.a);
-      return null;
+      const ink = prop ? INK_PROPS.has(prop) : null;
+      if (grey(c.rgb)) {
+        // A scrim is translucent; a chip at 0.9 alpha is just a chip.
+        if (c.a < 0.6) return fmt(lum(c.rgb) < 0.5 ? darkest : lightest, c.a);
+        return fmt(alongRamp(rel(lum(c.rgb))), c.a);
+      }
+      const hue = (brandRef && same(c.rgb, brandRef.rgb)) || brandish(c.rgb) ? accent : nearestHue(c.rgb);
+      // Ink is always the full colour. A background or an unknown token is
+      // the full colour only when OWA drew it at strength; near OWA's own
+      // background it was a wash, and stays one.
+      const wash = ink === true ? false : rel(lum(c.rgb)) < SURFACE;
+      return fmt(wash ? surface(hue) : hue, c.a);
     };
+    // An event chip, the way Omarchy's templates and current calendar
+    // design both do it: a palette colour is ink, never a fill. The block is
+    // the background pulled towards the colour, the text and the edge are
+    // the colour at full strength. That is readable by construction, because
+    // every named colour was designed to hold WCAG AA against the palette's
+    // background and the block is most of the way to that background. It is
+    // still checked: if the pair falls under 4.5:1 the block is pulled
+    // further towards the background, and failing that the text falls back
+    // to the palette foreground. Never guessed, always measured.
+    map.chip = rgb => {
+      const hue = (brandRef && same(rgb, brandRef.rgb)) || brandish(rgb) ? accent : nearestHue(rgb);
+      let block = mix(bg, hue, 0.35), ink = hue;
+      if (contrast(ink, block) < 4.5) block = mix(bg, hue, 0.2);
+      // Still short: pull the ink towards the foreground only as far as it
+      // needs, so the text keeps as much of the hue as legibility allows.
+      for (let f = 0.1; contrast(ink, block) < 4.6 && f <= 1; f += 0.1) ink = mix(hue, fg, f);
+      return { block: fmt(block, 1), ink: fmt(ink, 1), edge: fmt(hue, 1) };
+    };
+    // A rule that sets both a background and a text colour is a chip, and
+    // event chips are exactly that: Fabric classes with both baked in as
+    // literals and no inline style at all (measured 2026-09-17,
+    // `.content-175 { background-color: rgba(253,247,246,0.9); color:
+    // rgb(100,100,100) }`). Chromatic backgrounds take the chip treatment
+    // above; neutral ones — Outlook's dimmed past events — map along the
+    // ramp with the ink pushed towards the foreground until it reads.
+    map.pair = (bgv, fgv) => {
+      const b = parseColour(bgv), f = parseColour(fgv);
+      if (!b || !f || b.a < 0.5) return null;
+      if (!grey(b.rgb)) {
+        const chip = map.chip(b.rgb);
+        return { block: chip.block, ink: chip.ink, edge: chip.edge };
+      }
+      const block = alongRamp(rel(lum(b.rgb)));
+      let ink = grey(f.rgb) ? alongRamp(rel(lum(f.rgb))) : (parseColour(map(fgv, 'color')) || f).rgb;
+      // Towards whichever end of the palette reads better on this block:
+      // a light chip under a dark OWA lands at the text end of the ramp,
+      // and pushing its ink towards the text would only sink it further.
+      const pole = contrast(fg, block) >= contrast(bg, block) ? fg : bg;
+      for (let t = 0.1; contrast(ink, block) < 4.6 && t <= 1; t += 0.1) ink = mix(ink, pole, t);
+      return { block: fmt(block, b.a), ink: fmt(ink, 1), edge: null };
+    };
+    return map;
   }
 
   function sheet(id) {
@@ -1218,10 +1460,16 @@ function foresight(env) {
         const owner = r.parentStyleSheet && r.parentStyleSheet.ownerNode;
         if (owner && /^omarchy-owa-/.test(owner.id || '')) continue;
         const body = [];
+        const bgv = r.style.getPropertyValue('background-color');
+        const fgv = r.style.getPropertyValue('color');
+        const pair = bgv && fgv && !bgv.includes('var(') && !fgv.includes('var(')
+          ? map.pair(bgv, fgv) : null;
+        if (pair) body.push(`background-color:${pair.block} !important`, `color:${pair.ink} !important`);
         for (const p of COLOUR_PROPS) {
+          if (pair && (p === 'background-color' || p === 'color')) continue;
           const v = r.style.getPropertyValue(p);
           if (!v || v.includes('var(')) continue;
-          const m = map(v);
+          const m = pair && pair.edge && p.startsWith('border') ? pair.edge : map(v, p);
           if (m) body.push(`${p}:${m} !important`);
         }
         if (body.length) {
@@ -1242,6 +1490,104 @@ function foresight(env) {
     lastSheetCount = document.styleSheets.length;
   }
 
+  // Event chips, calendar swatches and the like get their colours as inline
+  // styles set by React, which no stylesheet pass can see. They are mapped
+  // here as they appear and whenever React rewrites them. The original value
+  // is remembered per element and property, and our own write is recognised
+  // on the way back in, so React's re-render and our rewrite never chase
+  // each other and no colour is ever mapped twice.
+  const INLINE_PROPS = ['color', 'background-color', 'border-color', 'border-top-color',
+    'border-right-color', 'border-bottom-color', 'border-left-color', 'fill', 'stroke'];
+  const inlineSeen = new WeakMap();
+  let inlineMap = null;
+
+  // A chip is an element with a chromatic, opaque inline background that is
+  // bigger than a swatch. Swatches — the colour dots in the calendar list
+  // and the category picker — keep the full colour, since a wash says
+  // nothing at that size. Measured against the element, not assumed from
+  // the markup, because the markup is Outlook's and changes.
+  const SWATCH_PX = 28;
+  const isChip = (el, c) => {
+    if (!c || c.a <= 0.5 || isGrey(c.rgb) || toHsl(c.rgb)[1] < 0.12) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > SWATCH_PX || r.height > SWATCH_PX;
+  };
+
+  // `refresh` is the palette change: every colour is mapped again from the
+  // original Outlook wrote, which is kept per property. Mapping from the
+  // live value would map our own output a second time — the same
+  // compounding bug the token snapshot exists to prevent.
+  function mapInline(el, refresh) {
+    if (!inlineMap || !el.style) return;
+    let rec = inlineSeen.get(el);
+    if (!rec) { rec = {}; inlineSeen.set(el, rec); }
+    // The value to map: Outlook's, if it changed it; the remembered
+    // original on a refresh; nothing if it is still our own last write.
+    const source = p => {
+      const v = el.style.getPropertyValue(p);
+      if (!v) { delete rec[p]; return null; }
+      const r = rec[p];
+      if (r && v === r.ours) return refresh ? r.orig : null;
+      return v;
+    };
+    // Background first: whether this is a chip decides how its text maps.
+    let chip = rec['background-color'] ? rec['background-color'].chip : null;
+    const bgv = source('background-color');
+    if (bgv) {
+      const c = parseColour(bgv);
+      chip = isChip(el, c) ? inlineMap.chip(c.rgb) : null;
+      const m = chip ? chip.block : inlineMap(bgv, 'background-color');
+      if (m) {
+        el.style.setProperty('background-color', m, 'important');
+        rec['background-color'] = { orig: bgv, ours: el.style.getPropertyValue('background-color'), chip };
+      } else { delete rec['background-color']; chip = null; }
+      // What Outlook wrote and what was decided, readable from the console:
+      // the originals live in a WeakMap the page cannot reach.
+      el.setAttribute('data-owa-src', `${chip ? 'chip' : m ? 'map' : 'skip'} ${bgv}`);
+    } else if (!rec['background-color']) chip = null;
+
+    for (const p of INLINE_PROPS) {
+      if (p === 'background-color') continue;
+      const v = source(p);
+      if (!v) continue;
+      const m = chip && p === 'color' ? chip.ink
+              : chip && p.startsWith('border') ? chip.edge
+              : inlineMap(v, p);
+      if (!m) { delete rec[p]; continue; }
+      el.style.setProperty(p, m, 'important');
+      rec[p] = { orig: v, ours: el.style.getPropertyValue(p) };
+    }
+    // Everything inside the chip takes its ink, whatever token it used.
+    if (chip) {
+      el.setAttribute('data-owa-chip', '');
+      el.style.setProperty('--owa-chip-fg', chip.ink, 'important');
+    } else if (el.hasAttribute('data-owa-chip')) {
+      el.removeAttribute('data-owa-chip');
+      el.style.removeProperty('--owa-chip-fg');
+    }
+  }
+
+  function applyInline(map, full) {
+    inlineMap = map;
+    if (full) {
+      for (const el of document.querySelectorAll('[style]')) mapInline(el, true);
+    }
+  }
+
+  const inlineObserver = new MutationObserver(muts => {
+    if (!inlineMap) return;
+    for (const m of muts) {
+      if (m.type === 'attributes') { mapInline(m.target); continue; }
+      for (const n of m.addedNodes) {
+        if (n.nodeType !== 1) continue;
+        if (n.hasAttribute('style')) mapInline(n);
+        for (const el of n.querySelectorAll('[style]')) mapInline(el);
+      }
+    }
+  });
+  inlineObserver.observe(root, { attributes: true, attributeFilter: ['style'],
+                                 childList: true, subtree: true });
+
   let palette = null;
   // full=true remaps every sheet from scratch (the palette changed);
   // full=false only picks up sheets injected since the last pass.
@@ -1249,9 +1595,61 @@ function foresight(env) {
     if (!palette || !snapshot) return;
     const map = makeMapper(palette);
     if (!map) return;
-    if (full) applyTokens(palette, map);
+    if (full) {
+      applyTokens(palette, map);
+      // For our own rules (today's number): the accent, and whichever of
+      // the palette's background and text reads better on it. Omarchy's
+      // templates always put the background on the accent; the check is
+      // for a palette whose accent sits too close to its background.
+      const C = palette.colors;
+      const acc = hex(C.accent || ''), bg = hex(C.background || ''), fg = hex(C.foreground || '');
+      if (acc && bg && fg) {
+        root.style.setProperty('--owa-accent', C.accent);
+        root.style.setProperty('--owa-on-accent',
+          contrast(bg, acc) >= contrast(fg, acc) ? C.background : C.foreground);
+      }
+    }
     applyLiterals(map, full);
+    applyInline(map, full);
+    // The bar copies its button colours off Outlook's own, and the loop
+    // that does so watches the body — a repaint only touches the head, so
+    // without this the bar kept the old colours until something unrelated
+    // moved. Measured 2026-09-17: "they update, but take a long time".
+    if (full) {
+      update();
+      // Fluent's buttons transition their colours, so the first copy lands
+      // mid-transition and the bar ends up a shade off Today. Copy again
+      // once the transitions have run out.
+      setTimeout(adoptToolbarTheme, 500);
+      setTimeout(adoptToolbarTheme, 1500);
+    }
   }
+
+  // Outlook follows the system colour scheme *live*, and Omarchy sets that
+  // scheme when the theme changes. So Outlook flips mode underneath a
+  // snapshot taken in the other mode, and the neutral scale then runs
+  // backwards: every dark-mode literal lands at the text end of the ramp,
+  // and the page comes out in the palette's foreground colour. Measured
+  // 2026-09-17: toolbar rgb(240,238,233) = the dark palette's foreground.
+  // The snapshot is retaken when the mode changes, from either signal
+  // Outlook could be reacting to, and only a real flip repaints.
+  function resnapshotIfModeFlipped() {
+    if (!snapshot || !palette) return;
+    const before = parseColour(snapshot['--colorNeutralBackground1']);
+    if (!takeSnapshot()) return;
+    const after = parseColour(snapshot['--colorNeutralBackground1']);
+    if (!before || !after || (lum(before.rgb) < 0.5) === (lum(after.rgb) < 0.5)) return;
+    paint(true);
+    cacheCss();
+    console.info('[foresight] theme: OWA switched mode, repainted over', snapshot['--colorNeutralBackground1']);
+  }
+  let modeCheck = 0;
+  const scheduleModeCheck = () => { clearTimeout(modeCheck); modeCheck = setTimeout(resnapshotIfModeFlipped, 600); };
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', scheduleModeCheck);
+  new MutationObserver(scheduleModeCheck).observe(root, { attributes: true, attributeFilter: ['class'] });
+  addEventListener('DOMContentLoaded', () => {
+    if (document.body) new MutationObserver(scheduleModeCheck).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  });
 
   // Caching the palette is not enough to make this instant. Measured on a
   // warm page: the fetch returns in 7ms, and the sheets still do not land
@@ -1272,6 +1670,7 @@ function foresight(env) {
     const li = document.getElementById('omarchy-owa-literals');
     try {
       env.cache.set(CSS_KEY, JSON.stringify({
+        algo: CSS_ALGO,
         mtime: palette.mtime,
         theme: th.textContent,
         literals: li ? li.textContent : '',
@@ -1284,7 +1683,7 @@ function foresight(env) {
   function injectCachedCss() {
     let c;
     try { c = JSON.parse(env.cache.get(CSS_KEY) || 'null'); } catch (_) { return false; }
-    if (!c || !c.theme) return false;
+    if (!c || !c.theme || c.algo !== CSS_ALGO) return false;
     sheet('omarchy-owa-theme').textContent = c.theme;
     if (c.literals) sheet('omarchy-owa-literals').textContent = c.literals;
     return true;
@@ -1308,6 +1707,7 @@ function foresight(env) {
   function paintFromCache() {
     const data = cachedPalette();
     if (!data) return;
+    root.style.setProperty('--owa-font', fontStack(data.font));
     let tries = 0;
     const attempt = () => {
       if (lastMtime !== null) return;            // the live poll got there first
@@ -1334,12 +1734,15 @@ function foresight(env) {
         // mtime there would make every later poll see "unchanged" and bail,
         // wedging the theme off until the next time the palette changed.
         if (!snapshot && !takeSnapshot()) return;
+        root.style.setProperty('--owa-font', fontStack(data.font));
         if (data.mtime === lastMtime) return;   // genuinely unchanged
         lastMtime = data.mtime;
         palette = data;
         cachePalette(data);
         paint(true);
         cacheCss();
+        console.info('[foresight] theme: painted', data.mode, 'palette', data.mtime,
+                     'bg', data.colors.background, 'over OWA', snapshot['--colorNeutralBackground1']);
         // Griffel keeps injecting stylesheets as the app warms up, so the
         // literals sheet grows for a while after the first paint. Catch up
         // once things have settled, or the cache only ever holds what was
@@ -1364,6 +1767,9 @@ function foresight(env) {
       }
     }
   }
+
+  root.style.setProperty('--owa-past-opacity', String(PAST_OPACITY));
+  root.style.setProperty('--owa-font', fontStack(''));
 
   function rescale() {
     const sc = q('.inDayScrollContainer');
@@ -1505,6 +1911,131 @@ function foresight(env) {
     gridSlot()?.focus();
   }
 
+  // ---- the selected slot ----------------------------------------------
+  // Everything keyboard hangs off Outlook's selected slot: the arrows move
+  // it, `c` composes at it, Space walks the day around it, Tab lands on it.
+  // Measured 2026-09-16 in an app window: Outlook creates no slot on load
+  // (activeElement is a bare div, no selectedInterval element), and after
+  // Today / Next / Previous it either leaves the old one behind or drops it.
+  // So the slot is placed here.
+  //
+  // Also measured: a synthetic pointer sequence at a point on the day
+  // column creates a slot at the half hour under that point and focuses it,
+  // exactly as a mouse click does. Focusing the grid and sending an arrow
+  // key does the opposite and removes it. So the click is the primitive,
+  // and the label is read back afterwards rather than trusted.
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const dayHeaders = () => [...document.querySelectorAll('[data-column-date]')]
+    .map(h => ({ el: h, date: h.dataset.columnDate })).filter(h => h.date);
+  const nowBlock = () => {
+    const n = new Date();
+    return Math.floor((n.getHours() * 60 + n.getMinutes()) / 30) * 30;
+  };
+  const slotStart = () => { const k = labelKey(gridSlot()); return k ? k.mins : null; };
+  const isEvent = el => !!el && !!el.closest('[role="button"][aria-label]')
+    && !(el.closest('[role="button"][aria-label]').id || '').startsWith('selectedInterval');
+
+  function clickAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    // Never through an overlay, and never on an event: that opens it.
+    if (!el || !surface()?.contains(el) || isEvent(el)) return false;
+    const o = { bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true,
+                clientX: x, clientY: y };
+    for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      el.dispatchEvent(t.startsWith('pointer') ? new PointerEvent(t, o) : new MouseEvent(t, o));
+    }
+    return true;
+  }
+
+  // Select `date` at `mins` (minutes from midnight, a half-hour boundary).
+  // Scrolls only when that half hour is off screen. null when there is no
+  // day grid to click (month view, not rendered yet), false when the click
+  // did not produce the slot, true when it did.
+  async function placeSlot(date, mins) {
+    const sc = q('.inDayScrollContainer');
+    const head = dayHeaders().find(h => h.date === date);
+    if (!sc || !head || sc.scrollHeight < 100) return null;
+    const block = sc.scrollHeight / 48;
+    const content = (mins / 1440) * sc.scrollHeight + block / 2;   // middle of the half hour
+    if (content < sc.scrollTop + block || content > sc.scrollTop + sc.clientHeight - block) {
+      sc.scrollTop = Math.max(0, content - sc.clientHeight / 2);
+      sc.setAttribute('data-owa-scrolled', '');   // ours now: settleScroll must not undo it
+    }
+    const hr = head.el.getBoundingClientRect();
+    const y = sc.getBoundingClientRect().top + content - sc.scrollTop;
+    const landed = () => {
+      const got = slotStart();
+      return !!gridSlot() && (got === null || got === mins);   // null: label without a year (locale)
+    };
+    // Events can sit under the middle of a column; the left edge rarely.
+    for (const x of [hr.left + hr.width / 2, hr.left + 6]) {
+      if (!clickAt(x, y)) continue;
+      for (let i = 0; i < 10 && !gridSlot(); i++) await sleep(100);   // one React render away
+      if (landed()) return true;
+      // Off by whole blocks: the geometry is slightly wrong, the label is not.
+      const got = slotStart();
+      if (gridSlot() && got !== null && (got - mins) % 30 === 0) {
+        clickAt(x, y - ((got - mins) / 30) * block);
+        for (let i = 0; i < 10 && !landed(); i++) await sleep(100);
+        if (landed()) return true;
+      }
+    }
+    return false;
+  }
+
+  // Serialises the two callers: the load-time placement must not race the
+  // one that follows a navigation.
+  let slotBusy = false, nextSlotTry = 0;
+
+  // Focus that nobody chose: nothing, or a bare container. Outlook parks
+  // focus on a div at load; that is not a place the user put it.
+  const focusIdle = () => {
+    const ae = document.activeElement;
+    return !ae || ae === document.body
+      || (ae.tagName === 'DIV' && !ae.getAttribute('role')
+          && !ae.closest('#omarchy-owa-bar, #omarchy-owa-toggle, [role="dialog"]'));
+  };
+
+  // No slot and nothing deliberately focused: select the current half hour
+  // on today, or the first day on screen when today is not. Runs from the
+  // mutation loop, so it is rate-limited and waits for the grid to settle.
+  function ensureSlot() {
+    if (slotBusy || gridSlot() || overlayOpen() || !focusIdle()) return;
+    const sc = q('.inDayScrollContainer');
+    if (!sc || !sc.hasAttribute('data-owa-scrolled')) return;
+    if (performance.now() < nextSlotTry) return;
+    nextSlotTry = performance.now() + 2000;
+    slotBusy = true;
+    const date = targetDate() || localDate(), mins = nowBlock();
+    placeSlot(date, mins)
+      .then(ok => { if (ok === false) console.warn('[foresight] slot: could not select', date, fromMinutes(mins)); })
+      .finally(() => { slotBusy = false; });
+  }
+
+  // Today / Next / Previous: run the navigation, wait for the week to
+  // change, then put the slot back where it was relative to the new week —
+  // same column, same time. Today goes to today at the current half hour.
+  async function followSlot(nav, go) {
+    const before = dayHeaders().map(h => h.date).join();
+    const prev = labelKey(gridSlot());
+    const idx = prev ? dayHeaders().findIndex(h => +h.date.slice(-2) === prev.day) : -1;
+    slotBusy = true;
+    try {
+      go();
+      // Today on the current week changes nothing, so do not wait 3s for it.
+      for (let i = 0; i < 30 && dayHeaders().map(h => h.date).join() === before
+                      && !(nav === 0 && i >= 3); i++) await sleep(100);
+      const heads = dayHeaders();
+      if (!heads.length) return;
+      let date, mins;
+      if (nav === 0) { date = localDate(); mins = nowBlock(); }
+      else { date = (heads[idx] || heads[0]).date; mins = prev ? prev.mins : nowBlock(); }
+      if (!heads.some(h => h.date === date)) date = heads[0].date;
+      const ok = await placeSlot(date, mins);
+      if (ok === false) console.warn('[foresight] slot: could not select', date, fromMinutes(mins));
+    } finally { slotBusy = false; }
+  }
+
   // Tab is a two-region switch: the calendar, or the bar. Everything else on
   // the page is out of the order entirely, so it is always obvious where the
   // next press goes.
@@ -1547,6 +2078,66 @@ function foresight(env) {
       .map(el => ({ el, key: labelKey(el) }))
       .filter(o => o.key)
       .sort((a, b) => a.key.day - b.key.day || a.key.mins - b.key.mins || a.key.x - b.key.x);
+  }
+
+  // Past events: over on a day before today, or ended before now on today.
+  // The day comes from the column the event sits in, the end from the second
+  // time in its label; an all-day event has no time and is past with its day.
+  // Outlook's own "dim past events" recolours them, which the chip mapping
+  // then normalises away, so the fade here is the only distinction — and
+  // it is opacity, so the theme's colours survive it.
+  let lastPastMark = 0;
+  function markPast() {
+    const now = performance.now();
+    if (now - lastPastMark < 1000) return;
+    lastPastMark = now;
+    const heads = dayHeaders().map(h => ({ date: h.date, r: h.el.getBoundingClientRect() }));
+    if (!heads.length) return;
+    const today = localDate();
+    const n = new Date(), nowMins = n.getHours() * 60 + n.getMinutes();
+    for (const o of calendarEvents()) {
+      const r = o.el.getBoundingClientRect(), cx = r.x + r.width / 2;
+      const h = heads.find(h => cx >= h.r.left && cx <= h.r.right);
+      if (!h) continue;
+      const times = ((o.el.getAttribute('aria-label') || '').match(/\d{1,2}:\d{2}/g) || []);
+      const end = times.length >= 2 ? toMinutes(times[1]) : (times.length ? toMinutes(times[0]) + 30 : 1440);
+      const past = h.date < today || (h.date === today && end <= nowMins);
+      o.el.toggleAttribute('data-owa-past', past);
+    }
+  }
+
+  // "Wednesday" becomes "Wed": the short form comes from the column's own
+  // date, formatted in the page's language, so it is right in every locale
+  // Outlook renders. Only the text node's data changes, never the tree —
+  // React keeps its own view of the text and only rewrites it on a
+  // re-render, which this loop then catches again. The same walk tags the
+  // number and the weekday for the header CSS, and marks today's number.
+  let lastDress = 0;
+  function dressHeaders() {
+    const now = performance.now();
+    if (now - lastDress < 1000) return;
+    lastDress = now;
+    const lang = root.getAttribute('lang') || undefined;
+    const today = localDate();
+    for (const h of dayHeaders()) {
+      let short;
+      try { short = new Date(h.date + 'T12:00:00').toLocaleDateString(lang, { weekday: 'short' }); }
+      catch (_) { continue; }
+      if (!short) continue;
+      for (const leaf of h.el.querySelectorAll('*')) {
+        if (leaf.children.length || !leaf.firstChild || leaf.firstChild.nodeType !== 3) continue;
+        const text = leaf.firstChild.data.trim();
+        if (!text) continue;
+        if (/^\d+$/.test(text)) {
+          leaf.setAttribute('data-owa-daynum', '');
+          leaf.toggleAttribute('data-owa-today', h.date === today);
+          continue;
+        }
+        if (!/^\p{L}+\.?$/u.test(text)) continue;   // a word, not a date or a badge
+        leaf.setAttribute('data-owa-weekday', '');
+        if (text !== short && text.length > short.length) leaf.firstChild.data = short;
+      }
+    }
   }
 
   // Nearest in time on the same day, and only then on another day — so a slot
@@ -1713,6 +2304,9 @@ function foresight(env) {
       settleScroll(rescale());
       restrictTabStops();
       keepGridFocused();
+      ensureSlot();
+      markPast();
+      dressHeaders();
     });
   }
 
@@ -1838,6 +2432,28 @@ foresight.flaggedWindow = function () {
     return sessionStorage.getItem(APP_KEY) === '1';
   } catch (_) {
     return false;  // private mode with storage blocked — stay out of the way
+  }
+};
+
+// The calendar route for a landing-view setting. "outlook" is the plain
+// route, which opens whatever view Outlook itself has as the default.
+foresight.landingPath = function (view) {
+  const VIEWS = { workweek: '/calendar/view/workweek', week: '/calendar/view/week',
+                  day: '/calendar/view/day', month: '/calendar/view/month', outlook: '/calendar' };
+  return VIEWS[view] || VIEWS.week;
+};
+
+// True once per window: the first document this window loads. Kept in
+// sessionStorage, which is scoped to the window, so a redirect on landing
+// never fires again as the user moves around inside the app.
+foresight.firstLoad = function () {
+  const KEY = 'omarchy-owa-landed';
+  try {
+    if (sessionStorage.getItem(KEY) === '1') return false;
+    sessionStorage.setItem(KEY, '1');
+    return true;
+  } catch (_) {
+    return false;
   }
 };
 

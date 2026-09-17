@@ -26,6 +26,16 @@
       <input type="checkbox" id="landOnCalendar">
       Start on the calendar when the app opens on mail
     </label>
+    <label>
+      View to open on
+      <select id="landingView">
+        <option value="week">Week</option>
+        <option value="workweek">Work week</option>
+        <option value="day">Day</option>
+        <option value="month">Month</option>
+        <option value="outlook">Outlook's own default</option>
+      </select>
+    </label>
     <label class="check">
       <input type="checkbox" id="applyInTabs">
       Also apply in normal browser tabs
@@ -41,6 +51,14 @@
     <label>
       Hour the day opens at
       <input type="number" id="startHour" min="0" max="23" step="1" placeholder="6">
+    </label>
+    <label>
+      Font (blank = the system font)
+      <input type="text" id="font" placeholder="system font" spellcheck="false">
+    </label>
+    <label>
+      Past events fade to (%)
+      <input type="number" id="pastOpacity" min="10" max="100" step="5" placeholder="55">
     </label>
   </section>
 
@@ -62,8 +80,8 @@
       <p class="hint" id="feedStatus"></p>
     </div>
     <p class="hint">
-      A palette tints Outlook's greys and blues while keeping its light or dark
-      mode. For a real light/dark switch, change Outlook's own Appearance setting.
+      The palette replaces Outlook's colours entirely, light or dark, event
+      colours included. Outlook's own Appearance setting no longer matters.
     </p>
   </section>
 

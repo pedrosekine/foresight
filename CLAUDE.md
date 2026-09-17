@@ -78,6 +78,18 @@ reasonable and both cost a capability the reduction had no business touching.
 Put focus back only when it is genuinely lost — `body`, or outside the surface
 entirely — and never take it from somewhere the user deliberately put it.
 
+## Column widths are Outlook's model, not its CSS
+
+Outlook gives past days less width than today and the days after it
+(measured 2026-09-17 in the full week: 10 / 10 / 10 / 21.4 / 18.6 / 15 / 15
+percent, as an inline `flex-basis` on each column header). Do not equalise
+them with CSS. Events, the selection block and the all-day chips are
+positioned in JavaScript from Outlook's own model of those widths, and
+clicks are interpreted through the same model — so an override moves the
+headers and grid lines and leaves everything else where it was, and the
+synthetic click that places the slot lands in a different day from the one
+it aimed at. Tried and reverted at 0.5.1.10.
+
 ## Snapshot before you paint
 
 `takeSnapshot()` must capture **Outlook's** colours, never ours. It reads
