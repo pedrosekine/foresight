@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "foresight",
-  "version": "0.5.2.2",
+  "version": "0.5.2.3",
   "description": "A better outlook: your Outlook Web calendar reduced to a calm, keyboard-driven app. Ordinary Outlook tabs are left alone.",
   "homepage_url": "https://github.com/pedrosekine/foresight",
   "icons": {

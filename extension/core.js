@@ -1840,11 +1840,31 @@ function foresight(env) {
     try { env.cache.set(PALETTE_KEY, JSON.stringify(data)); } catch (_) {}
   }
 
+  // A palette comes from a feed, a bundled file or the cache, and its
+  // values are written into stylesheets and custom properties. Only what a
+  // palette can legitimately hold gets through: #rrggbb colours, a plain
+  // family name, a mode, a number for the version. Anything else is dropped
+  // — so a feed cannot write CSS through a colour string.
+  function sanePalette(data) {
+    if (!data || typeof data !== 'object' || !data.colors || typeof data.colors !== 'object') return null;
+    const colors = {};
+    for (const [k, v] of Object.entries(data.colors)) {
+      if (/^[a-z_]{1,32}$/.test(k) && typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v.trim())) colors[k] = v.trim();
+    }
+    if (!colors.background || !colors.foreground) return null;
+    const font = typeof data.font === 'string' && /^[\w\s-]{1,64}$/.test(data.font.trim()) ? data.font.trim() : '';
+    return {
+      mode: data.mode === 'light' ? 'light' : 'dark',
+      mtime: Number.isFinite(Number(data.mtime)) ? Number(data.mtime) : 0,
+      font,
+      colors,
+    };
+  }
+
   function cachedPalette() {
     try {
       const raw = env.cache.get(PALETTE_KEY);
-      const data = raw ? JSON.parse(raw) : null;
-      return (data && data.colors) ? data : null;
+      return sanePalette(raw ? JSON.parse(raw) : null);
     } catch (_) { return null; }
   }
 
@@ -1874,8 +1894,9 @@ function foresight(env) {
   function pollTheme() {
     Promise.resolve()
       .then(() => env.theme())
-      .then(data => {
-        if (!data || !data.colors) return;
+      .then(raw => {
+        const data = sanePalette(raw);
+        if (!data) return;
         // Snapshot first, and don't record the mtime until it succeeds. The
         // first poll can land before OWA has defined its tokens; banking the
         // mtime there would make every later poll see "unchanged" and bail,
