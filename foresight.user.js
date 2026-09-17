@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.0
+// @version      0.5.2.1
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -114,6 +114,7 @@ function foresight(env) {
     { label: 'New', title: 'New event', primary: true, ribbon: 2532, key: 'n' },
     { label: '\u2039', title: 'Previous', nav: 1, key: 'k' },
     { label: '\u203a', title: 'Next', nav: 2, key: 'j' },
+    { label: '?', title: 'Keys', help: true, key: '?' },
   ];
 
   const findControl = a =>
@@ -2663,6 +2664,7 @@ function foresight(env) {
       b.textContent = a.label;
       b.title = a.key ? `${a.title} (${a.key})` : a.title;
       b.addEventListener('click', () => {
+        if (a.help) { toggleHelp(); return; }
         const target = 'nav' in a ? navButton(a.nav) : findControl(a);
         if (!target) console.warn('[foresight] control not found:', a.title);
         else if ('nav' in a) followSlot(a.nav, () => target.click());
