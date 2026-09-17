@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.1.25
+// @version      0.5.2.0
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -79,8 +79,11 @@ function foresight(env) {
   // Before OWA has rendered a single pixel. `sheet()` falls back to
   // documentElement when there is no <head> yet, which at document-start
   // there is not.
+  // The splash's state lives up here for the same reason as CSS_ALGO: it
+  // is touched at document-start, before a `let` further down exists.
+  let splash = null, splashTimer = 0;
   injectCachedCss();
-
+  showSplash();
 
   const q = s => document.querySelector(s);
 
@@ -105,12 +108,12 @@ function foresight(env) {
   // The arrows are ours so they can sit after New; Outlook's own pair is
   // hidden and clicked through, the way j and k do it.
   const ACTIONS = [
-    { label: 'D',   title: 'Day',   ribbon: 2504 },
-    { label: 'W',   title: 'Week',  ribbon: 2519 },
-    { label: 'M',   title: 'Month', ribbon: 2505 },
-    { label: 'New', title: 'New event', primary: true, ribbon: 2532 },
-    { label: '\u2039', title: 'Previous', nav: 1 },
-    { label: '\u203a', title: 'Next', nav: 2 },
+    { label: 'D',   title: 'Day',   ribbon: 2504, key: 'd' },
+    { label: 'W',   title: 'Week',  ribbon: 2519, key: 'w' },
+    { label: 'M',   title: 'Month', ribbon: 2505, key: 'm' },
+    { label: 'New', title: 'New event', primary: true, ribbon: 2532, key: 'n' },
+    { label: '\u2039', title: 'Previous', nav: 1, key: 'k' },
+    { label: '\u203a', title: 'Next', nav: 2, key: 'j' },
   ];
 
   const findControl = a =>
@@ -777,7 +780,17 @@ function foresight(env) {
 
   function onShortcut(e) {
     if (e.altKey || e.metaKey) return;               // leave OWA's own bindings alone
+    if (help && (e.key === 'Escape' || e.key === '?')) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      toggleHelp();
+      return;
+    }
     if (isTyping(e.target) || overlayOpen()) return;
+    if (e.key === '?' && !e.ctrlKey) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      toggleHelp();
+      return;
+    }
     // Ctrl+←/→ are k/j for hands that live on the arrows. Any other Ctrl
     // combination is Outlook's. Inside a field Ctrl+arrow is still
     // word-jump, because typing bailed out above.
@@ -935,6 +948,29 @@ function foresight(env) {
       pointer-events: none;
     }
     html[data-owa-minimal] #omarchy-owa-bar { display: flex; }
+
+    /* The keys dialog, in Today's slots like everything else of ours. */
+    #omarchy-owa-help {
+      position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center;
+      background: color-mix(in srgb, var(--neutralPrimary, #000) 30%, transparent);
+      font-family: var(--owa-font, system-ui, sans-serif);
+    }
+    #omarchy-owa-help > div {
+      min-width: 420px; max-width: 90vw; padding: 20px 28px 24px;
+      color: var(--neutralPrimary, #242424);
+      background: var(--neutralPrimarySurface, #fff);
+      border: 1px solid var(--neutralTertiaryAlt, #ccc); border-radius: 8px;
+      box-shadow: 0 12px 40px color-mix(in srgb, var(--neutralPrimary, #000) 25%, transparent);
+    }
+    #omarchy-owa-help h2 { margin: 0 0 14px; font-size: 16px; font-weight: 600; }
+    #omarchy-owa-help table { border-collapse: collapse; font-size: 14px; }
+    #omarchy-owa-help td { padding: 5px 0; vertical-align: baseline; }
+    #omarchy-owa-help td:first-child { padding-right: 20px; white-space: nowrap; color: var(--neutralSecondary, inherit); }
+    #omarchy-owa-help kbd {
+      font: inherit; font-size: 13px; padding: 1px 7px; border-radius: 4px;
+      color: var(--neutralPrimary, inherit);
+      border: 1px solid var(--neutralTertiaryAlt, #ccc); background: var(--neutralLighter, transparent);
+    }
     .omarchy-owa-group { display: flex; align-items: center; }
 
     /* Every control is drawn like Today. Today is a Fabric button whose
@@ -1773,6 +1809,47 @@ function foresight(env) {
 
   // Called before anything else, so the first frame the browser paints is
   // already in the right colours.
+  // Outlook boots behind its own blue splash for a couple of seconds. Ours
+  // covers it from document-start in the cached palette's colours, and
+  // comes down the moment the calendar surface renders — or after fifteen
+  // seconds, or on any key or click, whichever is first. Those exits are
+  // not optional: Outlook sometimes lands on a sign-in interstitial on
+  // this same origin, and a splash that could hide one would be a trap.
+  function showSplash() {
+    if (splash || !document.documentElement) return;
+    let bg = '#f0f0f0', fg = '#242424', dim = '#6b6b6b';
+    const pal = cachedPalette();
+    if (pal && pal.colors.background && pal.colors.foreground) {
+      bg = pal.colors.background; fg = pal.colors.foreground;
+      dim = pal.colors.light_foreground || pal.colors.muted || fg;
+    }
+    splash = document.createElement('div');
+    splash.id = 'omarchy-owa-splash';
+    splash.setAttribute('style',
+      `position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;` +
+      `align-items:center;justify-content:center;gap:10px;background:${bg};color:${fg};` +
+      `font-family:"Adwaita Sans",system-ui,sans-serif;transition:opacity .2s;cursor:default`);
+    const name = document.createElement('div');
+    name.textContent = 'foresight';
+    name.setAttribute('style', 'font-size:40px;font-weight:600;letter-spacing:-0.01em');
+    const line = document.createElement('div');
+    line.textContent = 'a better outlook';
+    line.setAttribute('style', `font-size:16px;color:${dim}`);
+    splash.append(name, line);
+    document.documentElement.appendChild(splash);
+    splashTimer = setTimeout(hideSplash, 15000);
+    addEventListener('keydown', hideSplash, { capture: true, once: true });
+    splash.addEventListener('click', hideSplash, { once: true });
+  }
+  function hideSplash() {
+    if (!splash) return;
+    clearTimeout(splashTimer);
+    const el = splash;
+    splash = null;
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 220);
+  }
+
   function injectCachedCss() {
     let c;
     try { c = JSON.parse(env.cache.get(CSS_KEY) || 'null'); } catch (_) { return false; }
@@ -2198,7 +2275,7 @@ function foresight(env) {
   // below. Once per week and need, so a drag by hand is not undone.
   const allDayArea = () => q('[data-app-section^="calendar-view-header"]');
   const allDayStrip = () => q('[data-allday-placeholder]');
-  let lastFit = null, fitting = false, fitWarned = false;
+  let lastFit = null, fitting = false, fitTries = 0, fitRetry = 0;
 
   // Rows the fullest day needs, and the row pitch, read off the chips'
   // inline positions: a chip at top 21px is on row 1; "+15" on row 1 stands
@@ -2239,8 +2316,8 @@ function foresight(env) {
     const h0 = strip.getBoundingClientRect().height;
     const shown = Math.max(Math.round((h0 - 2) / pitch), 0);
     const delta = (rows - shown) * pitch;
-    lastFit = key;
-    if (Math.abs(delta) < pitch / 2) return;
+    if (Math.abs(delta) < pitch / 2) { lastFit = key; return; }
+    if (fitRetry && performance.now() < fitRetry) return;
     fitting = true;
     try {
       const r = handle.getBoundingClientRect();
@@ -2260,10 +2337,14 @@ function foresight(env) {
       fire('mouseup', y0 + delta);
       await sleep(400);
       const h1 = allDayStrip()?.getBoundingClientRect().height ?? h0;
-      if (Math.abs(h1 - h0) < 2 && !fitWarned) {
-        fitWarned = true;
-        console.warn('[foresight] all-day strip: the splitter did not move', { from: h0, wanted: h0 + delta });
-      }
+      if (Math.abs(h1 - h0) >= 2) { lastFit = key; fitTries = 0; fitRetry = 0; return; }
+      // Early in the load the handle exists before Outlook has wired its
+      // drag (measured 2026-09-17: the same sequence that moved the strip
+      // from the console did nothing on the first pass after a reload).
+      // Try again in a few seconds, a handful of times, then say so.
+      if (++fitTries < 5) { fitRetry = performance.now() + 3000; return; }
+      lastFit = key; fitTries = 0; fitRetry = 0;
+      console.warn('[foresight] all-day strip: the splitter did not move', { from: h0, wanted: h0 + delta });
     } finally { fitting = false; }
   }
 
@@ -2468,7 +2549,9 @@ function foresight(env) {
         if (field && nudged !== field) stripCompose();
       }
       if (!root.hasAttribute('data-owa-minimal') || !inCalendar()) return;
+      if (splash && q('[role="main"] [data-column-date]')) hideSplash();
       adoptToolbarTheme();
+      labelToday();
       syncBar();
       tagDayColumns();
       settleScroll(rescale());
@@ -2496,6 +2579,62 @@ function foresight(env) {
     if (on) update();
   }
 
+  // Today is Outlook's button; its tooltip gets the key like ours. React
+  // rewrites the title on re-render, so this is re-applied by the loop.
+  function labelToday() {
+    const t = navButton(0);
+    if (t && t.title && !t.title.includes('(t)')) t.title = t.title.replace(/\s*$/, '') + ' (t)';
+  }
+
+  // `?` shows the keys. A dialog in the palette's colours; `?`, Escape or a
+  // click closes it. It is a [role="dialog"], so every other shortcut is
+  // held while it is up, the way they are for Outlook's own dialogs.
+  const HELP_ROWS = [
+    ['c', 'quick add — type a title, Enter saves'],
+    ['n', 'new event, in Outlook\'s compose'],
+    ['t', 'today'],
+    ['j / k', 'next / previous week'],
+    ['Ctrl+→ / Ctrl+←', 'the same, for hands on the arrows'],
+    ['d / w / m', 'day / week / month'],
+    ['s', 'calendars sidebar'],
+    ['↑ ↓ ← →', 'move the selected slot: half an hour, a day'],
+    ['Space', 'walk the events of the day you are on'],
+    ['Tab', 'bar → slot → nearest event'],
+    ['Enter / Delete', 'open / delete the focused event'],
+    ['?', 'this list'],
+    ['Alt+Shift+O', 'the whole of Outlook back'],
+  ];
+  let help = null;
+  function toggleHelp() {
+    if (help) { help.remove(); help = null; return; }
+    help = document.createElement('div');
+    help.id = 'omarchy-owa-help';
+    help.setAttribute('role', 'dialog');
+    help.setAttribute('aria-label', 'Keyboard shortcuts');
+    const panel = document.createElement('div');
+    const h = document.createElement('h2');
+    h.textContent = 'Keys';
+    panel.appendChild(h);
+    const table = document.createElement('table');
+    for (const [keys, what] of HELP_ROWS) {
+      const tr = document.createElement('tr');
+      const td1 = document.createElement('td'), td2 = document.createElement('td');
+      for (const k of keys.split(' / ')) {
+        if (td1.childNodes.length) td1.append(' / ');
+        const kbd = document.createElement('kbd');
+        kbd.textContent = k;
+        td1.appendChild(kbd);
+      }
+      td2.textContent = what;
+      tr.append(td1, td2);
+      table.appendChild(tr);
+    }
+    panel.appendChild(table);
+    help.appendChild(panel);
+    help.addEventListener('click', () => toggleHelp());
+    document.body.appendChild(help);
+  }
+
   let bar = null, rightGroup = null;
   function buildBar() {
     bar = document.createElement('div');
@@ -2511,7 +2650,7 @@ function foresight(env) {
     const paneToggle = document.createElement('button');
     paneToggle.className = 'omarchy-owa-btn';
     paneToggle.textContent = '☰';
-    paneToggle.title = 'Calendars';
+    paneToggle.title = 'Calendars (s)';
     paneToggle.addEventListener('click', () =>
       setPane(!root.hasAttribute('data-owa-pane')));
 
@@ -2522,7 +2661,7 @@ function foresight(env) {
       const b = document.createElement('button');
       b.className = 'omarchy-owa-btn' + (a.primary ? ' primary' : '');
       b.textContent = a.label;
-      b.title = a.title;
+      b.title = a.key ? `${a.title} (${a.key})` : a.title;
       b.addEventListener('click', () => {
         const target = 'nav' in a ? navButton(a.nav) : findControl(a);
         if (!target) console.warn('[foresight] control not found:', a.title);
