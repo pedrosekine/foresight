@@ -15,8 +15,8 @@ admin-approval wall, and Graph, EWS, CalDAV and ActiveSync are all either
 OAuth-gated or unsupported. That leaves OWA. This makes it bearable.
 
 It strips the suite header, app rail and ribbon, compresses the day grid so a
-full working day fits without scrolling, and puts a small action bar top-left
-with the controls actually worth keeping.
+full working day fits without scrolling, and leaves one bar: the week at the
+left, the controls actually worth keeping at the right.
 
 ## Install
 
@@ -95,7 +95,8 @@ recolouring.
 | | |
 |---|---|
 | `☰` | collapsible sidebar — month picker and per-account calendar lists |
-| `New` `D` `W` `M` | new event, and day / week / month views |
+| `2026, September 14–20 ⌄` | the week; click for Outlook's date picker |
+| `Today` `D` `W` `M` `New` `‹` `›` | today, day / week / month views, new event, previous / next |
 | `Alt+Shift+O` | toggle the full Outlook UI back, for anything the bar doesn't cover |
 | dot, bottom-right | same toggle, for when you've forgotten the shortcut |
 
@@ -197,6 +198,7 @@ change them and sync with your Chrome profile.
 | Start on the calendar | on | an installed Outlook app opens on mail; send it on |
 | View to open on | week | day, week, work week, month, or Outlook's own default; applied on the window's first load, however the app was installed |
 | Past events fade to | 55% | past events keep their colours and fade instead |
+| All-day events: rows before they fold | `7` | the all-day strip grows to one row more than the fullest day in view needs, up to this many; the rest fold into "+N" |
 | Font | desktop font | the desktop's UI font as the theme feed reports it (GTK's font setting), or a family you name; without the feed, `system-ui` |
 
 Userscript: Violentmonkey's script editor has a **Values** tab with

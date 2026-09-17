@@ -13,6 +13,7 @@
     landOnCalendar: true,
     landingView: 'week',
     pastOpacity: 55,
+    allDayRows: 7,
     font: '',
   };
   const FEED_ORIGINS = ['http://127.0.0.1/*', 'http://localhost/*'];
@@ -36,6 +37,7 @@
     $('hoursVisible').value = stored.hoursVisible ?? '';
     $('startHour').value = stored.startHour ?? '';
     $('pastOpacity').value = stored.pastOpacity ?? '';
+    $('allDayRows').value = stored.allDayRows ?? '';
     $('font').value = stored.font ?? '';
     $('themeSource').value = current('themeSource');
     $('themeUrl').value = stored.themeUrl ?? '';
@@ -68,6 +70,7 @@
   $('hoursVisible').addEventListener('change', number('hoursVisible', 4, 24));
   $('startHour').addEventListener('change', number('startHour', 0, 23));
   $('pastOpacity').addEventListener('change', number('pastOpacity', 10, 100));
+  $('allDayRows').addEventListener('change', number('allDayRows', 1, 12));
   $('font').addEventListener('change', e => save('font', e.target.value.trim()));
 
   $('applyInTabs').addEventListener('change', e => save('applyInTabs', e.target.checked));

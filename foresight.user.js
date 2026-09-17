@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.1.11
+// @version      0.5.1.25
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -45,6 +45,7 @@ function foresight(env) {
     startHour: 6,                                     // where the grid sits on load
     themePollMs: 3000,
     pastOpacity: 55,                                  // past events fade to this %
+    allDayRows: 7,                                    // the all-day strip grows to this many rows
     font: '',                                         // '' = the system UI font
   };
   const setting = key => env.setting(key, DEFAULTS[key]);
@@ -53,6 +54,7 @@ function foresight(env) {
   const START_HOUR = setting('startHour');
   const THEME_POLL_MS = setting('themePollMs');
   const PAST_OPACITY = Math.min(Math.max(setting('pastOpacity'), 10), 100) / 100;
+  const ALL_DAY_ROWS = Math.min(Math.max(setting('allDayRows'), 1), 12);
   // A family named in the settings wins; otherwise the desktop's UI font as
   // the theme feed reports it (GTK's font-name, which Omarchy sets); and
   // failing both, system-ui. Measured 2026-09-17: Chromium under Hyprland
@@ -99,11 +101,16 @@ function foresight(env) {
   // plain id is absent on the split buttons (New, Day). The `button`
   // qualifier matters twice over: those two also have a wrapping <div>
   // with the same attribute, and it keeps the "-Menu" chevron out.
+  // Drawn in this order at the right of the bar, after Outlook's Today.
+  // The arrows are ours so they can sit after New; Outlook's own pair is
+  // hidden and clicked through, the way j and k do it.
   const ACTIONS = [
-    { label: 'New', title: 'New event', primary: true, ribbon: 2532, side: 'left' },
-    { label: 'D',   title: 'Day',   ribbon: 2504, side: 'right' },
-    { label: 'W',   title: 'Week',  ribbon: 2519, side: 'right' },
-    { label: 'M',   title: 'Month', ribbon: 2505, side: 'right' },
+    { label: 'D',   title: 'Day',   ribbon: 2504 },
+    { label: 'W',   title: 'Week',  ribbon: 2519 },
+    { label: 'M',   title: 'Month', ribbon: 2505 },
+    { label: 'New', title: 'New event', primary: true, ribbon: 2532 },
+    { label: '\u2039', title: 'Previous', nav: 1 },
+    { label: '\u203a', title: 'Next', nav: 2 },
   ];
 
   const findControl = a =>
@@ -873,11 +880,18 @@ function foresight(env) {
       padding: 0 !important;
     }
 
-    /* make room for our bar at both ends of the date-navigation row */
+    /* Today sits at the right, ahead of our group: the toolbar is padded
+       by that group's width so Today ends where D begins. Outlook's own
+       arrows are hidden — ours stand in for them after New — but stay in
+       the tree, since j, k and our arrows click them. */
     html[data-owa-minimal] [data-app-section="CalendarSurfaceNavigationToolbar"],
     html[data-owa-minimal] [data-app-section="CalendarModule"] [role="toolbar"] {
-      padding-left: var(--owa-bar-width, 0px) !important;
       padding-right: var(--owa-bar-right, 0px) !important;
+      justify-content: flex-end !important;
+    }
+    html[data-owa-minimal] [data-app-section="CalendarSurfaceNavigationToolbar"]
+      button:not(:has([data-icon-name="CalendarTodayRegular"])):not([aria-haspopup="menu"]) {
+      display: none !important;
     }
 
     /* Today reads fine as a word; the arrows next to it do not, so this is
@@ -890,6 +904,16 @@ function foresight(env) {
     html[data-owa-minimal] [role="main"] button:has(i[data-icon-name^="Building"]),
     html[data-owa-minimal] [role="main"] button[aria-label*="work plan" i] {
       display: none !important;
+    }
+
+    /* Outlook draws the calendar as a card floating 8px in from the
+       window: margin 8px 8px 0, 4px radius, an inline box-shadow (measured
+       2026-09-17: the card 1754x1055 inside a 1770x1063 parent). Keyed on
+       structure — the wrapper whose child holds the navigation toolbar and
+       which contains the surface — since its class name is generated. */
+    html[data-owa-minimal]
+      div:has(> div > [data-app-section="CalendarSurfaceNavigationToolbar"]):has([data-app-section="CalendarModuleSurface"]) {
+      margin: 0 !important; border-radius: 0 !important; box-shadow: none !important;
     }
 
     /* compress the 24h columns; events are positioned in percentages,
@@ -912,10 +936,6 @@ function foresight(env) {
     }
     html[data-owa-minimal] #omarchy-owa-bar { display: flex; }
     .omarchy-owa-group { display: flex; align-items: center; }
-
-    /* The sidebar toggle stays pinned at the far left; everything after it
-       shifts by the pane's width so New keeps sitting beside Today. */
-    #omarchy-owa-left { margin-left: var(--owa-pane-width, 0px); }
 
     /* Every control is drawn like Today. Today is a Fabric button whose
        colours are all slot references (measured 2026-09-17 from its own
@@ -1108,8 +1128,81 @@ function foresight(env) {
     html[data-owa-minimal] [data-column-date] :has([data-owa-daynum], [data-owa-weekday]) {
       display: contents !important;
     }
-    html[data-owa-minimal] [data-owa-weekday] { order: -1; font-size: 14px !important; }
-    html[data-owa-minimal] [data-owa-daynum] { font-size: 16px !important; font-weight: 500 !important; }
+    html[data-owa-minimal] [data-owa-weekday] {
+      order: -1; font-size: 13px !important; font-weight: 400 !important;
+      color: var(--neutralSecondary, inherit) !important;
+    }
+    html[data-owa-minimal] [data-owa-daynum] { font-size: 16px !important; font-weight: 600 !important; }
+    /* The header's wrapper carries a 49px minimum (measured 2026-09-17:
+       54px tall, text at the floor, the band above it left by the hidden
+       work-plan pill). Reclaimed. */
+    html[data-owa-minimal] :has(> [data-column-date]) { min-height: 0 !important; height: 38px !important; }
+
+    /* Type scale, measured 2026-09-17 and reset to three layers: where am
+       I (today's number, the current hour), what is here (chips), how to
+       move (the toolbar). Sizes 12 / 13 / 14 / 16 / 17; weights 400 and 600
+       only. The week title was 20px/600 in the primary colour — the
+       loudest text on the page for the least important information — and
+       steps back to 17px/400 secondary. Chips were 10px (all-day) and
+       12px/600 (timed), two conventions for one object; both are 12px/600,
+       left-aligned. The hour labels sat centred in the gutter with "now"
+       in bold only; they sit against the grid line, and "now" takes the
+       accent at normal weight. Icons on chips step back to 60%. */
+    /* The week title at the left, beside the sidebar toggle, with every
+       control at the right. Taken out of the toolbar's flow and placed
+       after the toggle (12px margin + 40px button + 20px), in the same
+       32px box as the toggle, centred on the row as the toggle is; 30px
+       text on a 32px line — capitals of ~22px, which fills the box the
+       way a label fills a button (24px read as smaller than the toggle;
+       40px as a poster). */
+    html[data-owa-minimal] [data-app-section="CalendarSurfaceNavigationToolbar"] [aria-haspopup="menu"] {
+      position: absolute !important; left: 72px !important; top: calc(50% - 16px) !important;
+      height: 32px !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important;
+      overflow: visible !important;
+    }
+    html[data-owa-minimal] [data-app-section="CalendarSurfaceNavigationToolbar"] [aria-haspopup="menu"],
+    html[data-owa-minimal] [data-app-section="CalendarSurfaceNavigationToolbar"] [aria-haspopup="menu"] :not(i):not([class*="menuIcon"]) {
+      font-size: 30px !important; font-weight: 600 !important; line-height: 32px !important;
+    }
+    /* The bar is one row of controls: one weight, one colour, and size
+       alone sets the title apart. Today's label is 600 in Fluent; the
+       desktop's buttons (GTK, Chromium's frame) are regular, so the row
+       follows the desktop. 72px tall — a GTK header bar's 56 with more
+       air, asked for twice on seeing it — rather than Outlook's compact
+       48. */
+    html[data-owa-minimal] [data-app-section="CalendarSurfaceNavigationToolbar"] {
+      position: relative !important; box-sizing: border-box !important;
+      height: 72px !important; min-height: 72px !important; align-items: center !important;
+    }
+    /* Fluent's toolbar does not centre its items: Today sits in a group
+       and a wrapper that keep it at the top with its own 8px margin, which
+       coincided with the centre only while the row was 48px. Both levels
+       centre now, so Today and our bar derive the same position. */
+    html[data-owa-minimal] [data-app-section="CalendarSurfaceNavigationToolbar"] > [role="presentation"],
+    html[data-owa-minimal] [data-app-section="CalendarSurfaceNavigationToolbar"] > [role="presentation"] > div {
+      display: flex !important; align-items: center !important; height: 100% !important;
+    }
+    html[data-owa-minimal] [data-app-section="CalendarSurfaceNavigationToolbar"] button:not([aria-haspopup="menu"]),
+    html[data-owa-minimal] [data-app-section="CalendarSurfaceNavigationToolbar"] button:not([aria-haspopup="menu"]) :not(i),
+    html[data-owa-minimal] .omarchy-owa-btn {
+      font-weight: 400 !important;
+    }
+    html[data-owa-minimal] [data-owa-24h] > time {
+      text-align: right !important; padding-right: 6px !important; box-sizing: border-box !important;
+      font-weight: 400 !important; color: var(--neutralSecondary, inherit) !important;
+    }
+    html[data-owa-minimal] [data-owa-24h] > time[data-owa-now] {
+      color: var(--owa-accent, var(--themePrimary)) !important;
+    }
+    html[data-owa-minimal] [role="main"] [role="button"][aria-label]:not([id^="selectedInterval"]) > div:first-child,
+    html[data-owa-minimal] [role="main"] [role="button"][aria-label]:not([id^="selectedInterval"]) > div:first-child :not(i):not([class*="Icon"]) {
+      font-size: 12px !important; font-weight: 600 !important; line-height: 16px !important;
+      justify-content: flex-start !important; text-align: left !important;
+    }
+    html[data-owa-minimal] [data-app-section^="calendar-view-header"] [role="button"][aria-label] > div:first-child {
+      padding-left: 6px !important;
+    }
+    html[data-owa-minimal] [role="main"] [role="button"][aria-label] i[data-icon-name] { opacity: 0.6; }
     html[data-owa-minimal] [data-owa-daynum][data-owa-today] {
       background: var(--owa-accent) !important; color: var(--owa-on-accent) !important;
       border-radius: 0.3em; padding: 0 0.3em; line-height: 1.25;
@@ -1829,7 +1922,7 @@ function foresight(env) {
   // row reads the same.
   const BUTTON_GAP = 8;
 
-  let barPad = null, barTop = null, barRight = null, paneWidth = null;
+  let barTop = null, rightWidth = null, barRight = null;
   // The bar is out of flow, so measuring the toolbar it sits over can't
   // feed back into its own position.
   function syncBar() {
@@ -1846,34 +1939,23 @@ function foresight(env) {
 
     // Keep the right-hand group clear of the toolbar's own content.
     const rw = rightGroup ? rightGroup.offsetWidth : 0;
-    if (rw !== barRight) {
-      barRight = rw;
+    if (rw !== rightWidth) {
+      rightWidth = barRight = rw;
       root.style.setProperty('--owa-bar-right', rw + 'px');
     }
 
-    const pane = q('#leftPaneContainer');
-    const pw = pane ? pane.offsetWidth : 0;
-    if (pw !== paneWidth) {
-      paneWidth = pw;
-      root.style.setProperty('--owa-pane-width', pw + 'px');
-      barPad = null;   // the row just reflowed; re-derive the gap from scratch
-    }
-
-    // The distance from our last left-hand button to Today is the sum of our
-    // margin, the toolbar's own inset and Today's 12px margin — none of which
-    // are ours to predict. Measure the real gap and correct the toolbar's
-    // padding by the difference; being linear, it lands in one pass.
+    // The distance from Today to our first button is Today's margin, ours,
+    // and whatever the toolbar keeps after Today (measured 2026-09-17: 20px
+    // where 8 was wanted, the extra 12 from inside Outlook's toolbar).
+    // Measure the real gap and correct the padding by the difference;
+    // being linear, it lands in one pass.
     const today = tb.querySelector('button');
-    const last = leftGroup && leftGroup.lastElementChild;
-    if (!today || !last) return;
-    if (barPad === null) {
-      barPad = leftGroup.offsetWidth;
-      root.style.setProperty('--owa-bar-width', barPad + 'px');
-    }
-    const gap = today.getBoundingClientRect().left - last.getBoundingClientRect().right;
+    const first = rightGroup && rightGroup.firstElementChild;
+    if (!today || !first) return;
+    const gap = first.getBoundingClientRect().left - today.getBoundingClientRect().right;
     if (Math.abs(gap - BUTTON_GAP) > 0.5) {
-      barPad = Math.min(Math.max(barPad + BUTTON_GAP - gap, 0), 2000);
-      root.style.setProperty('--owa-bar-width', barPad + 'px');
+      barRight = Math.min(Math.max(barRight + gap - BUTTON_GAP, 0), 2000);
+      root.style.setProperty('--owa-bar-right', barRight + 'px');
     }
   }
 
@@ -2106,6 +2188,85 @@ function foresight(env) {
     }
   }
 
+  // The all-day strip shows as many rows as its height allows and folds the
+  // rest into "+N". That height is Outlook's own state, set by dragging the
+  // splitter at the strip's foot (measured 2026-09-17: a 2px row-resize
+  // handle; 44px holds two 21px rows; the height survives week changes and
+  // a reload). So the strip is sized by driving that splitter, to one row
+  // more than the fullest day in view needs — an empty row to drop a new
+  // all-day event into — capped by the setting, with Outlook's own floor
+  // below. Once per week and need, so a drag by hand is not undone.
+  const allDayArea = () => q('[data-app-section^="calendar-view-header"]');
+  const allDayStrip = () => q('[data-allday-placeholder]');
+  let lastFit = null, fitting = false, fitWarned = false;
+
+  // Rows the fullest day needs, and the row pitch, read off the chips'
+  // inline positions: a chip at top 21px is on row 1; "+15" on row 1 stands
+  // for 15 more, so that day needs 16.
+  function allDayNeed(area) {
+    let need = 0, pitch = 21;
+    const tops = new Set();
+    for (const w of area.querySelectorAll('[data-calitemid]')) {
+      const box = w.closest('[style*="top"]') || w;
+      const top = parseFloat(box.style.top) || 0;
+      tops.add(top);
+    }
+    const sorted = [...tops].sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i++) {
+      const d = sorted[i] - sorted[i - 1];
+      if (d > 4) { pitch = d; break; }
+    }
+    for (const w of area.querySelectorAll('[data-calitemid]')) {
+      const box = w.closest('[style*="top"]') || w;
+      const row = Math.round((parseFloat(box.style.top) || 0) / pitch);
+      const more = /^overflowIndicator/.test(w.getAttribute('data-calitemid'))
+        ? parseInt((w.textContent.match(/\d+/) || [0])[0], 10) : 1;
+      need = Math.max(need, row + more);
+    }
+    return { need, pitch };
+  }
+
+  async function fitAllDay() {
+    if (fitting) return;
+    const area = allDayArea(), strip = allDayStrip(), heads = dayHeaders();
+    if (!area || !strip || !heads.length) return;
+    const { need, pitch } = allDayNeed(area);
+    const key = heads[0].date + ':' + need;
+    if (key === lastFit) return;
+    const handle = [...area.querySelectorAll('div')].find(e => getComputedStyle(e).cursor === 'row-resize');
+    if (!handle) return;
+    const rows = Math.min(need + 1, ALL_DAY_ROWS);
+    const h0 = strip.getBoundingClientRect().height;
+    const shown = Math.max(Math.round((h0 - 2) / pitch), 0);
+    const delta = (rows - shown) * pitch;
+    lastFit = key;
+    if (Math.abs(delta) < pitch / 2) return;
+    fitting = true;
+    try {
+      const r = handle.getBoundingClientRect();
+      const x = r.left + r.width / 2, y0 = r.top + r.height / 2;
+      // Mouse events only, every one of them on the handle. Measured
+      // 2026-09-17 against four wirings: pointer+mouse with the moves on
+      // window, mouse-only on document, and pointer-only on the handle all
+      // left the strip where it was; mouse-only on the handle moved it by
+      // exactly the distance asked (170 -> 233 for 63px).
+      const fire = (type, y) => handle.dispatchEvent(new MouseEvent(type, {
+        bubbles: true, cancelable: true, composed: true, button: 0, buttons: 1,
+        clientX: x, clientY: y, screenX: x, screenY: y + 100,
+      }));
+      fire('mousedown', y0);
+      await sleep(40);
+      for (const y of [y0 + delta / 2, y0 + delta]) { fire('mousemove', y); await sleep(40); }
+      fire('mouseup', y0 + delta);
+      await sleep(400);
+      const h1 = allDayStrip()?.getBoundingClientRect().height ?? h0;
+      if (Math.abs(h1 - h0) < 2 && !fitWarned) {
+        fitWarned = true;
+        console.warn('[foresight] all-day strip: the splitter did not move', { from: h0, wanted: h0 + delta });
+      }
+    } finally { fitting = false; }
+  }
+
   // "Wednesday" becomes "Wed": the short form comes from the column's own
   // date, formatted in the page's language, so it is right in every locale
   // Outlook renders. Only the text node's data changes, never the tree —
@@ -2119,6 +2280,15 @@ function foresight(env) {
     lastDress = now;
     const lang = root.getAttribute('lang') || undefined;
     const today = localDate();
+    // The current hour's label in the gutter, for the accent. Matched on
+    // the text in both the 24h form ("14") and the locale's own ("2 PM").
+    const clock = new Date(), h24 = String(clock.getHours());
+    let hLoc = h24;
+    try { hLoc = clock.toLocaleTimeString(lang, { hour: 'numeric' }); } catch (_) {}
+    for (const t of document.querySelectorAll('[data-owa-24h] > time')) {
+      const text = t.textContent.trim();
+      t.toggleAttribute('data-owa-now', text === h24 || text === hLoc);
+    }
     for (const h of dayHeaders()) {
       let short;
       try { short = new Date(h.date + 'T12:00:00').toLocaleDateString(lang, { weekday: 'short' }); }
@@ -2307,6 +2477,7 @@ function foresight(env) {
       ensureSlot();
       markPast();
       dressHeaders();
+      fitAllDay();
     });
   }
 
@@ -2315,7 +2486,6 @@ function foresight(env) {
     if (on) root.setAttribute('data-owa-pane', '');
     else root.removeAttribute('data-owa-pane');
     try { localStorage.setItem(PANE_KEY, on ? '1' : '0'); } catch (_) {}
-    barPad = null;
     update();
   }
 
@@ -2326,7 +2496,7 @@ function foresight(env) {
     if (on) update();
   }
 
-  let bar = null, leftGroup = null, rightGroup = null;
+  let bar = null, rightGroup = null;
   function buildBar() {
     bar = document.createElement('div');
     bar.id = 'omarchy-owa-bar';
@@ -2334,9 +2504,6 @@ function foresight(env) {
     const start = document.createElement('div');
     start.id = 'omarchy-owa-start';
     start.className = 'omarchy-owa-group';
-    leftGroup = document.createElement('div');
-    leftGroup.id = 'omarchy-owa-left';
-    leftGroup.className = 'omarchy-owa-group';
     rightGroup = document.createElement('div');
     rightGroup.id = 'omarchy-owa-right';
     rightGroup.className = 'omarchy-owa-group';
@@ -2348,7 +2515,7 @@ function foresight(env) {
     paneToggle.addEventListener('click', () =>
       setPane(!root.hasAttribute('data-owa-pane')));
 
-    start.append(paneToggle, leftGroup);
+    start.append(paneToggle);
     bar.append(start, rightGroup);
 
     for (const a of ACTIONS) {
@@ -2357,11 +2524,12 @@ function foresight(env) {
       b.textContent = a.label;
       b.title = a.title;
       b.addEventListener('click', () => {
-        const target = findControl(a);
-        if (target) target.click();
-        else console.warn('[foresight] control not found:', a.title);
+        const target = 'nav' in a ? navButton(a.nav) : findControl(a);
+        if (!target) console.warn('[foresight] control not found:', a.title);
+        else if ('nav' in a) followSlot(a.nav, () => target.click());
+        else target.click();
       });
-      (a.side === 'right' ? rightGroup : leftGroup).appendChild(b);
+      rightGroup.appendChild(b);
     }
     document.body.appendChild(bar);
   }
