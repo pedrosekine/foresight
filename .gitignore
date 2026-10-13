@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 dist/
+demo/out/
+demo/node_modules/

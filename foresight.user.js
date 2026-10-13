@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.3
+// @version      0.5.2.4
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -2429,6 +2429,31 @@ function foresight(env) {
     return best;
   }
 
+  // Focusing an event from script does not stick the first time. Measured
+  // 2026-09-18 in the app window, with focusin logged from the page: Tab
+  // (or Space) put focus on the event, and within about a second Outlook
+  // handed it back to the slot, from its own code (owa.*.js, not ours) and
+  // with no key pressed in between. The second focus on the same event
+  // held, every time, in eight tries: the bounce is one pending "focus the
+  // selected interval" that the first re-render spends. So the event is
+  // focused, and if the slot takes focus back with no key in between, it is
+  // focused once more. A key in between is the user's — an arrow moves
+  // focus to the grid on purpose, and that must not be undone.
+  let held = null, heldUntil = 0;
+  function holdFocus(el) {
+    el.focus();
+    held = el;
+    heldUntil = performance.now() + 1500;
+  }
+  addEventListener('keydown', () => { held = null; }, true);
+  addEventListener('focusin', e => {
+    if (!held || performance.now() > heldUntil) return;
+    if (!(e.target.id || '').startsWith('selectedInterval')) return;
+    const el = held;
+    held = null;
+    setTimeout(() => { if (el.isConnected && document.activeElement !== el) el.focus(); }, 0);
+  }, true);
+
   const barButtons = () => [...document.querySelectorAll('#omarchy-owa-bar button')]
     .filter(isVisible);
 
@@ -2448,7 +2473,7 @@ function foresight(env) {
     const ae = document.activeElement;
     const at = sameDay.findIndex(o => o.el === ae || o.el.contains(ae));
     const next = at >= 0 ? sameDay[(at + 1) % sameDay.length] : nearestEvent(sameDay);
-    next.el.focus();
+    holdFocus(next.el);
     return true;
   }
 
@@ -2475,7 +2500,7 @@ function foresight(env) {
     // the nearest event, which does exist.
     const toCalendar = () => {
       if (slot) { slot.focus(); return; }
-      if (events.length) { nearestEvent(events).el.focus(); return; }
+      if (events.length) { holdFocus(nearestEvent(events).el); return; }
       // Nothing to focus in the calendar: leave focus alone rather than
       // bouncing it back where it came from.
     };
@@ -2497,7 +2522,7 @@ function foresight(env) {
     const near = () => (events.length ? nearestEvent(events).el : null);
 
     if (e.shiftKey) {
-      if (inBar) { const t = near(); if (t) t.focus(); else toCalendar(); return; }
+      if (inBar) { const t = near(); if (t) holdFocus(t); else toCalendar(); return; }
       if (at >= 0) { toCalendar(); return; }              // event ← slot
       toBar();                                            // slot ← bar
       return;
@@ -2505,7 +2530,7 @@ function foresight(env) {
     if (inBar || ae === document.body) { toCalendar(); return; }   // bar → slot
     if (at >= 0) { toBar(); return; }                          // event → bar
     const target = near();                                     // slot → event
-    if (target) target.focus(); else toBar();
+    if (target) holdFocus(target); else toBar();
   }
 
   // With only one stop for the whole bar, its buttons need their own key —
