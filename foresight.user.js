@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.4
+// @version      0.5.2.5
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -2048,16 +2048,37 @@ function foresight(env) {
     // The distance from Today to our first button is Today's margin, ours,
     // and whatever the toolbar keeps after Today (measured 2026-09-17: 20px
     // where 8 was wanted, the extra 12 from inside Outlook's toolbar).
-    // Measure the real gap and correct the padding by the difference;
-    // being linear, it lands in one pass.
+    // Measure the real gap and correct the padding by the difference.
+    //
+    // The padding pushes Today *left*, so excess gap has to be subtracted.
+    // Adding it fed the measurement back into itself: every pass widened the
+    // gap it had just measured, so the padding doubled its way to the old
+    // 2000px ceiling and dragged Today across the title on the way out
+    // (measured 2026-10-13 in the app window: padding 2000px, Today at
+    // -126..-16, the title at 72..392, the toolbar grown to 0..2000 on a
+    // 1177px viewport). With the sign right it lands in one pass: 324 → 312,
+    // gap 20 → 8, and 8 again on the pass after.
     const today = tb.querySelector('button');
     const first = rightGroup && rightGroup.firstElementChild;
     if (!today || !first) return;
     const gap = first.getBoundingClientRect().left - today.getBoundingClientRect().right;
     if (Math.abs(gap - BUTTON_GAP) > 0.5) {
-      barRight = Math.min(Math.max(barRight + gap - BUTTON_GAP, 0), 2000);
+      barRight = Math.min(Math.max(barRight - (gap - BUTTON_GAP), 0), titleLimit(tb, today));
       root.style.setProperty('--owa-bar-right', barRight + 'px');
     }
+  }
+
+  // The title is absolutely positioned, so nothing in the toolbar's flow
+  // keeps Today off it — the padding is free to push Today straight through
+  // the week we are looking at, which is exactly what the runaway above did.
+  // Cap it where Today's left edge would meet the title's right edge, so a
+  // wrong padding crowds our own buttons instead of landing on the title.
+  function titleLimit(tb, today) {
+    const title = tb.querySelector('[aria-haspopup="menu"]');
+    if (!title) return 2000;
+    const room = innerWidth - title.getBoundingClientRect().right
+      - today.getBoundingClientRect().width - BUTTON_GAP;
+    return Math.max(room, 0);
   }
 
   let queued = false;
