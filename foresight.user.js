@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.5
+// @version      0.5.2.7
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -818,10 +818,21 @@ function foresight(env) {
     if (binding.quickAdd) { claim(); quickAdd(); return; }
     if (binding.pane) { claim(); setPane(!root.hasAttribute('data-owa-pane')); return; }
     if (binding.dayEvents) {
-      // On an event already, Space means "open this one" — leave it to Fluent.
+      // On a button already, Space means "press this" — leave it alone. That
+      // is one of Outlook's events, or one of ours in the bar: events are
+      // role="button" divs, our bar is native <button> and carries no role at
+      // all, so both have to be named. Only the grid slot, which is also
+      // role="button", falls through to the cycling.
+      //
+      // Measured 2026-10-13: asking for the role alone missed our own
+      // buttons, and Space on them still pressed them only because Outlook
+      // drops the selected slot the moment focus leaves the grid, which left
+      // cycleDayEvents() with nothing to do. That is Outlook's behaviour
+      // holding our guard up; name the buttons and it stands on its own.
       const ae = document.activeElement;
-      if (ae && ae.getAttribute && ae.getAttribute('role') === 'button'
-          && !(ae.id || '').startsWith('selectedInterval')) return;
+      const onButton = !!ae
+        && (ae.tagName === 'BUTTON' || (ae.getAttribute && ae.getAttribute('role') === 'button'));
+      if (onButton && !(ae.id || '').startsWith('selectedInterval')) return;
       // Claimed whether or not there is anywhere to go. Space scrolls the
       // grid's own scroller otherwise, so a day with no events would scroll
       // the view out from under you — the conflict is in the default, not in
@@ -2108,9 +2119,16 @@ function foresight(env) {
       // Inside the calendar, focus is Outlook's business — slot or event.
       if (surface()?.contains(ae)) return;
       // Somewhere else deliberate: our bar, a field, a dialog, the sidebar.
+      // The sidebar is Outlook's #leftPaneContainer, and it sits *outside*
+      // [role="main"] — measured 2026-10-13 — so the surface check above does
+      // not cover it and it has to be named here, as this comment always
+      // claimed it was. Until now the only thing keeping focus in the sidebar
+      // was that Outlook drops the slot when focus leaves the grid, leaving
+      // gridSlot()?.focus() with nothing to take focus to.
       if (ae.closest('#omarchy-owa-bar, #omarchy-owa-toggle, #omarchy-owa-keys, input, textarea, '
                    + '[contenteditable="true"], [role="dialog"], [role="listbox"], '
-                   + '[data-app-section="CalendarSurfaceNavigationToolbar"]')) return;
+                   + '[data-app-section="CalendarSurfaceNavigationToolbar"], '
+                   + '#leftPaneContainer')) return;
     }
     gridSlot()?.focus();
   }
@@ -2200,11 +2218,32 @@ function foresight(env) {
           && !ae.closest('#omarchy-owa-bar, #omarchy-owa-toggle, [role="dialog"]'));
   };
 
+  // Until the first real key or click, nothing on the page is the user's
+  // doing — so focus sitting on an event cannot be a place they put it, and
+  // focusIdle() has no business vetoing the load-time placement.
+  //
+  // This is what made the arrows unreliable. Measured 2026-10-14 in the app
+  // window: placing the slot loses the race against the grid settling often
+  // enough to matter (one launch logged "slot: could not select 09:30" five
+  // times; the next launch, same screen, landed first try). Each failure is
+  // survivable on its own — the retry runs every 2s — but Outlook parks focus
+  // on an event while they fail, focusIdle() turns false, and the retry stops
+  // for good. The window then has no slot at all and the arrows do nothing
+  // until a keypress is spent handing the grid its focus back.
+  //
+  // Synthetic events do not count: placeSlot's own pointerdown would
+  // otherwise mark the page as touched before the first attempt finished.
+  let touched = false;
+  const markTouched = e => { if (e.isTrusted) touched = true; };
+  addEventListener('keydown', markTouched, true);
+  addEventListener('pointerdown', markTouched, true);
+
   // No slot and nothing deliberately focused: select the current half hour
   // on today, or the first day on screen when today is not. Runs from the
   // mutation loop, so it is rate-limited and waits for the grid to settle.
   function ensureSlot() {
-    if (slotBusy || gridSlot() || overlayOpen() || !focusIdle()) return;
+    if (slotBusy || gridSlot() || overlayOpen()) return;
+    if (touched && !focusIdle()) return;
     const sc = q('.inDayScrollContainer');
     if (!sc || !sc.hasAttribute('data-owa-scrolled')) return;
     if (performance.now() < nextSlotTry) return;
@@ -2466,7 +2505,11 @@ function foresight(env) {
     held = el;
     heldUntil = performance.now() + 1500;
   }
-  addEventListener('keydown', () => { held = null; }, true);
+  // A modifier pressed on its own is not a decision — Shift ahead of a
+  // capital, Ctrl ahead of a shortcut — so it must not drop the hold and hand
+  // the event back to Outlook's bounce.
+  const MODIFIER_ONLY = /^(Shift|Control|Alt|Meta)$/;
+  addEventListener('keydown', e => { if (!MODIFIER_ONLY.test(e.key)) held = null; }, true);
   addEventListener('focusin', e => {
     if (!held || performance.now() > heldUntil) return;
     if (!(e.target.id || '').startsWith('selectedInterval')) return;
@@ -2576,10 +2619,17 @@ function foresight(env) {
   // What stays is everything inside the calendar surface. Removing events
   // from the tab order took away opening one with Enter and deleting it with
   // Delete, which is a capability the reduction has no business costing.
+  //
+  // The sidebar is named for what it is. This list carried
+  // `#omarchy-owa-pane, [data-owa-pane-host]` for a while, and neither
+  // matched anything: the first is the localStorage key, not an id, and
+  // nothing ever set the second (measured 2026-10-13: zero elements for both,
+  // on a loaded calendar with the sidebar open). The sidebar stayed tabbable
+  // only because it is inside CalendarModule, which is on the list anyway.
   const PAGE_KEEP = '[role="main"], [data-app-section="CalendarModule"], '
                   + '#omarchy-owa-bar, #omarchy-owa-toggle, #omarchy-owa-keys, '
                   + '[data-app-section="CalendarSurfaceNavigationToolbar"], '
-                  + '#omarchy-owa-pane, [data-owa-pane-host]';
+                  + '#leftPaneContainer';
   // Throttled: update() runs on every mutation, and this walks every
   // focusable on the page. Twice a second is far more than enough to catch
   // controls Outlook adds as you navigate.
