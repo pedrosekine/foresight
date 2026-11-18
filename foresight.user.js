@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.12
+// @version      0.5.2.13
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -407,9 +407,18 @@ function foresight(env) {
       if (finished) return;
       if (!landed()) return giveUp();
       finished = true; commitInFlight = false;
-      root.removeAttribute('data-owa-committing');
       console.info('[foresight] quick add: saving', want.date, want.start + '–' + want.end);
+      // Still blank: the compose closing is what clears it (unstripCompose,
+      // from the update loop). Unblanking first showed the box again for
+      // the frames between this click and Outlook closing it — and in the
+      // wrong place, since the picker had grown it (measured 2026-11-18:
+      // the box back at full opacity 21px lower, ~1.1s after Enter).
       (saveButton() || save).click();
+      // A save Outlook refuses leaves the compose open with its reason in
+      // it. That has to be seen, not sat behind a blank.
+      setTimeout(() => {
+        if (composeOpen()) root.removeAttribute('data-owa-committing');
+      }, 4000);
     };
     setTimeout(done, 4000);                     // never wedge mid-commit
 
@@ -775,6 +784,16 @@ function foresight(env) {
   }
 
   function onTypeAhead(e) {
+    // While a save runs the form is invisible and focus is in Outlook's
+    // picker fields, so a key typed then would land in a field nobody can
+    // see and could change the date being written. Real keys only: the
+    // writes themselves send synthetic keydowns.
+    if (e.isTrusted && root.hasAttribute('data-owa-committing') && composeOpen()) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      return;
+    }
     if (!typeAhead) return;
     if (performance.now() > typeAhead.until) { typeAhead = null; return; }
     const title = q('[id$="_SUBJECT"] input');
@@ -832,9 +851,13 @@ function foresight(env) {
     // Ctrl+←/→ are k/j for hands that live on the arrows. Any other Ctrl
     // combination is Outlook's. Inside a field Ctrl+arrow is still
     // word-jump, because typing bailed out above.
+    // Enter on the slot creates there, the same as `c`. On an event, Enter
+    // stays Outlook's and opens it; only the slot is taken.
+    const onSlot = (e.target?.id || '').startsWith('selectedInterval');
     const binding = e.ctrlKey
       ? (e.shiftKey ? null : { ArrowLeft: SHORTCUTS.k, ArrowRight: SHORTCUTS.j }[e.key])
-      : SHORTCUTS[e.key.toLowerCase()];
+      : (e.key === 'Enter' ? (onSlot && !e.shiftKey ? SHORTCUTS.c : null)
+                           : SHORTCUTS[e.key.toLowerCase()]);
 
     // Outlook has to be stopped from seeing the key at all, not merely from
     // acting on it. With a slot selected it creates an event from whatever
@@ -860,7 +883,6 @@ function foresight(env) {
     // is typed straight after it lands in the title (see onTypeAhead).
     // Dead keys and IME composition are text too.
     if (!binding) {
-      const onSlot = (e.target?.id || '').startsWith('selectedInterval');
       if (onSlot && !e.ctrlKey
           && (e.key.length === 1 || e.key === 'Dead' || e.key === 'Process')) claim();
       return;
@@ -1194,10 +1216,25 @@ function foresight(env) {
        Outlook's full form paints for a few frames first and you see it
        flash before the small box replaces it — and again for the moment of
        the commit, while the picker is open behind it. */
-    html[data-owa-committing] [id^="ModalFocusTrapZone"],
     html[data-owa-quickadd-pending] [id^="ModalFocusTrapZone"] {
       opacity: 0 !important;
       transition: none !important;
+    }
+    /* The commit hides more than the box. Writing the date opens the date
+       field's month calendar in a layer of its own, a sibling of the
+       compose's layer under Fluent's layer host rather than inside the
+       modal (measured 2026-11-18: an ms-Callout in
+       #fluent-default-layer-host > .ms-Layer, fading in ~300ms after Enter,
+       caught on screen mid-fade). And the box itself grows and moves while
+       the picker is open, and the grey overlay sat on an empty screen for
+       a second. So every layer goes: the box, the overlay and the
+       calendar. What you see is Enter, the box gone, the event a moment
+       later. */
+    html[data-owa-committing] #fluent-default-layer-host > .ms-Layer,
+    html[data-owa-committing] [id^="ModalFocusTrapZone"] {
+      opacity: 0 !important;
+      transition: none !important;
+      animation: none !important;
     }
 
     /* The desktop's font instead of Segoe. Fluent reads its family from a
@@ -2839,7 +2876,7 @@ function foresight(env) {
   // click closes it. It is a [role="dialog"], so every other shortcut is
   // held while it is up, the way they are for Outlook's own dialogs.
   const HELP_ROWS = [
-    ['c', 'quick add — type the title at once, Enter saves'],
+    ['c / Enter', 'quick add at the slot — type the title at once, Enter saves'],
     ['n', 'new event, in Outlook\'s compose'],
     ['t', 'today'],
     ['j / k', 'next / previous week'],

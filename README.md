@@ -105,7 +105,7 @@ recolouring.
 
 | key | |
 |---|---|
-| `c` | quick add — type the title at once, Enter saves |
+| `c` or `Enter` on the slot | quick add — type the title at once, Enter saves |
 | `n` | new event (plain Outlook compose) |
 | `t` | today |
 | `d` / `w` / `m` | day / week / month view |
@@ -162,8 +162,10 @@ Times are forgiving: `1700`, `17`, `17:00`, `5pm` and `5.30pm` all work, and
 moving the start drags the end along to keep the duration.
 
 **The box is one width, always.** Outlook's own date picker is never shown:
-your values are written into it for the instant of the save, behind a blanked
-modal. That is why nothing resizes.
+your values are written into it for the instant of the save, with the box,
+its grey overlay and the picker's calendar all hidden until Outlook closes the
+compose. Keys typed in that second are held back, since focus is in fields you
+cannot see. If Outlook refuses the save, the box comes back with its reason.
 
 **To create an event somewhere other than now**, either type the date, or
 select the slot first. `c`
@@ -174,7 +176,7 @@ keyboard:
 |---|---|
 | `j` / `k` | move to the next / previous week |
 | arrow keys | move the selected slot — up/down by 30 minutes, left/right by a day |
-| `c` | compose at that slot |
+| `c` or `Enter` | compose at that slot |
 
 Then type the title and press Enter. This is Outlook's own selection machinery,
 which is why it is reliable — see the note below on what happened when the
