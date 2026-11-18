@@ -904,6 +904,13 @@ function foresight(env) {
       display: none !important;
     }
 
+    /* Outlook's in-app notifications: the Reminders card at top right
+       lives in this pane (measured 2026-10-21: one host, three child
+       slots, the reminder in the third; it does not take focus). */
+    html[data-owa-minimal] [data-app-section="NotificationPane"] {
+      display: none !important;
+    }
+
     /* Outlook draws the calendar as a card floating 8px in from the
        window: margin 8px 8px 0, 4px radius, an inline box-shadow (measured
        2026-09-17: the card 1754x1055 inside a 1770x1063 parent). Keyed on
@@ -1938,12 +1945,18 @@ function foresight(env) {
   function tagDayColumns() {
     const main = q('[role="main"]');
     if (!main) return;
-    for (const el of main.querySelectorAll('[style*="height:"]')) {
-      if (el.hasAttribute('data-owa-24h')) continue;
-      const m = /height:\s*(\d+(?:\.\d+)?)px/.exec(el.getAttribute('style') || '');
-      if (m && parseFloat(m[1]) >= DAY_COLUMN_MIN_PX) {
-        el.setAttribute('data-owa-24h', '');
-      }
+    // Only a `height` declaration counts, never the tail of `max-height`.
+    // The all-day strip's scroller carries "max-height: 66vh" in px, which
+    // passes 900 in a tall window; Outlook writes it after `height` on the
+    // first render and before it after a week change (measured 2026-11-18:
+    // "height: 107px; max-height: 920.7px;", then "max-height: 920.7px;
+    // height: 86px;"). An unanchored match tagged the strip on the first
+    // week change and our day-height rule pinned it at its 66vh cap. The
+    // tag is re-checked every pass, so an element that stops qualifying —
+    // or was tagged by that old match — is released.
+    for (const el of main.querySelectorAll('[style*="height:"], [data-owa-24h]')) {
+      const m = /(?:^|;)\s*height:\s*(\d+(?:\.\d+)?)px/.exec(el.getAttribute('style') || '');
+      el.toggleAttribute('data-owa-24h', !!m && parseFloat(m[1]) >= DAY_COLUMN_MIN_PX);
     }
   }
 
