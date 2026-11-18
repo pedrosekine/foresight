@@ -637,7 +637,10 @@ function foresight(env) {
 
   function openQuickAdd() {
     const newEvent = findControl({ ribbon: 2532, title: 'New event' });
-    if (!newEvent) return console.warn('[foresight] quick add: no New event button');
+    if (!newEvent) {
+      typeAhead = null;
+      return console.warn('[foresight] quick add: no New event button');
+    }
     unstripCompose();
     quickAddActive = true;
 
@@ -659,7 +662,9 @@ function foresight(env) {
       if (dtrow && !q('#omarchy-qa-row')) dtrow.before(buildFields());
       // Re-query rather than reuse the node we waited on: stripping makes
       // React re-render the form and replace it.
-      q('[id$="_SUBJECT"] input')?.focus();
+      const title = q('[id$="_SUBJECT"] input');
+      title?.focus();
+      flushTypeAhead(title);
       // One more frame so the reduced layout has settled before it shows.
       requestAnimationFrame(() =>
         requestAnimationFrame(() => root.removeAttribute('data-owa-quickadd-pending')));
@@ -725,6 +730,39 @@ function foresight(env) {
     commitAndSave();
   }
 
+  // Typing straight after `c`. The title takes focus about 0.9s after the
+  // key (measured 2026-11-18, longer when a slot has to be placed first),
+  // and until then a key went wherever focus was: before the compose
+  // mounted, into the shortcuts and Outlook's type-to-create; after, onto
+  // body, where it vanished. "c Dentist" typed at speed lost its first
+  // letters or switched to Day view. So from `c` until the title has
+  // focus, text keys are held here and written into the title once it
+  // does — in order, ahead of whatever is typed after.
+  let typeAhead = null;   // { text, until }
+
+  function flushTypeAhead(title) {
+    const t = typeAhead;
+    typeAhead = null;
+    if (!t || !t.text || !title) return;
+    reactSet(title, title.value + t.text);
+    title.setSelectionRange?.(title.value.length, title.value.length);
+  }
+
+  function onTypeAhead(e) {
+    if (!typeAhead) return;
+    if (performance.now() > typeAhead.until) { typeAhead = null; return; }
+    const title = q('[id$="_SUBJECT"] input');
+    if (title && document.activeElement === title) { flushTypeAhead(title); return; }
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.key === 'Escape') { typeAhead = null; return; }
+    if (e.key === 'Backspace') typeAhead.text = typeAhead.text.slice(0, -1);
+    else if (e.key.length === 1) typeAhead.text += e.key;
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+  }
+
   // Single-key shortcuts. OWA's own bindings are all modifier-based —
   // Alt+N, Alt+Shift+1..4, Ctrl+P — so plain letters are free, and those
   // keep working because anything with a modifier is ignored below.
@@ -771,7 +809,6 @@ function foresight(env) {
     const binding = e.ctrlKey
       ? (e.shiftKey ? null : { ArrowLeft: SHORTCUTS.k, ArrowRight: SHORTCUTS.j }[e.key])
       : SHORTCUTS[e.key.toLowerCase()];
-    if (!binding) return;
 
     // Outlook has to be stopped from seeing the key at all, not merely from
     // acting on it. With a slot selected it creates an event from whatever
@@ -780,16 +817,30 @@ function foresight(env) {
     // not help: it cancels the browser's default, while Outlook's own keydown
     // listener still runs. This is a capture-phase listener on the window, so
     // stopping propagation here means the key never reaches it.
-    //
-    // It only showed up right after a refresh, which is the one moment focus
-    // is reliably sitting on the grid slot, where type-to-create is armed.
     const claim = () => {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
     };
 
-    if (binding.quickAdd) { claim(); quickAdd(); return; }
+    // On the slot, a letter is a command or nothing — never the start of a
+    // title. Outlook's type-to-create took every key we did not bind, so
+    // what a letter did depended on which letter it was: "Meeting" switched
+    // to Month, "Lunch" started an event. And that event was a bare inline
+    // draft that saves on the next click anywhere (measured 2026-11-18: one
+    // `b` on the slot filed an event called "b"; for one frame after the
+    // key, focus is on body with no slot, which is what ensureSlot reads as
+    // lost focus, and its click saved the draft). Creating is `c`, and what
+    // is typed straight after it lands in the title (see onTypeAhead).
+    // Dead keys and IME composition are text too.
+    if (!binding) {
+      const onSlot = (e.target?.id || '').startsWith('selectedInterval');
+      if (onSlot && !e.ctrlKey
+          && (e.key.length === 1 || e.key === 'Dead' || e.key === 'Process')) claim();
+      return;
+    }
+
+    if (binding.quickAdd) { claim(); typeAhead = { text: '', until: performance.now() + 6000 }; quickAdd(); return; }
     if (binding.pane) { claim(); setPane(!root.hasAttribute('data-owa-pane')); return; }
     if (binding.dayEvents) {
       // On a button already, Space means "press this" — leave it alone. That
@@ -2144,7 +2195,14 @@ function foresight(env) {
   const isEvent = el => !!el && !!el.closest('[role="button"][aria-label]')
     && !(el.closest('[role="button"][aria-label]').id || '').startsWith('selectedInterval');
 
+  // Outlook's inline new-event draft: a bare text field in the grid that
+  // saves itself on the next click anywhere. Nothing of ours may click
+  // while one is open — that click is what filed one-letter events. The
+  // shortcuts no longer let a key start one, but a mouse still can.
+  const draftOpen = () => !!surface()?.querySelector('input, textarea');
+
   function clickAt(x, y) {
+    if (draftOpen()) return false;
     const el = document.elementFromPoint(x, y);
     // Never through an overlay, and never on an event: that opens it.
     if (!el || !surface()?.contains(el) || isEvent(el)) return false;
@@ -2160,10 +2218,32 @@ function foresight(env) {
   // Scrolls only when that half hour is off screen. null when there is no
   // day grid to click (month view, not rendered yet), false when the click
   // did not produce the slot, true when it did.
+  //
+  // A half hour under an event cannot be clicked without opening the
+  // event, and an event can fill the column's whole width, so both probes
+  // below can hit it. Measured 2026-11-18: with an event at 19:00 filling
+  // the column, "could not select 19:00" every 2s for good, focus left on
+  // body, and the arrows, Space and Tab-to-slot all dead. Outlook itself
+  // happily puts the slot under an event (the arrows do), so the nearest
+  // free half hour is taken instead and the arrows go the rest of the way.
   async function placeSlot(date, mins) {
+    for (let i = 0; i < 40 && fitting; i++) await sleep(50);   // a drag is mid-flight
     const sc = q('.inDayScrollContainer');
     const head = dayHeaders().find(h => h.date === date);
-    if (!sc || !head || sc.scrollHeight < 100) return null;
+    if (!sc || !head || sc.scrollHeight < 100 || draftOpen()) return null;
+    const near = [mins];
+    for (let d = 30; d <= 240; d += 30) near.push(mins + d, mins - d);
+    for (const m of near.filter(m => m >= 0 && m < 1440)) {
+      const r = await placeAt(sc, head, m);
+      if (r !== 'covered') return r;
+    }
+    return false;
+  }
+
+  // One half hour. true when the slot landed there, false when the click
+  // went in and the slot did not follow, 'covered' when there was nowhere
+  // to click.
+  async function placeAt(sc, head, mins) {
     const block = sc.scrollHeight / 48;
     const content = (mins / 1440) * sc.scrollHeight + block / 2;   // middle of the half hour
     if (content < sc.scrollTop + block || content > sc.scrollTop + sc.clientHeight - block) {
@@ -2177,8 +2257,15 @@ function foresight(env) {
       return !!gridSlot() && (got === null || got === mins);   // null: label without a year (locale)
     };
     // Events can sit under the middle of a column; the left edge rarely.
+    // Only an event in the way counts as covered; an overlay or an open
+    // draft is a reason to stop, not to go looking at other half hours.
+    let covered = true;
     for (const x of [hr.left + hr.width / 2, hr.left + 6]) {
-      if (!clickAt(x, y)) continue;
+      if (!clickAt(x, y)) {
+        if (draftOpen() || !isEvent(document.elementFromPoint(x, y))) covered = false;
+        continue;
+      }
+      covered = false;
       for (let i = 0; i < 10 && !gridSlot(); i++) await sleep(100);   // one React render away
       if (landed()) return true;
       // Off by whole blocks: the geometry is slightly wrong, the label is not.
@@ -2189,7 +2276,7 @@ function foresight(env) {
         if (landed()) return true;
       }
     }
-    return false;
+    return covered ? 'covered' : false;
   }
 
   // Serialises the two callers: the load-time placement must not race the
@@ -2229,7 +2316,7 @@ function foresight(env) {
   // on today, or the first day on screen when today is not. Runs from the
   // mutation loop, so it is rate-limited and waits for the grid to settle.
   function ensureSlot() {
-    if (slotBusy || gridSlot() || overlayOpen()) return;
+    if (slotBusy || fitting || gridSlot() || overlayOpen()) return;
     if (touched && !focusIdle()) return;
     const sc = q('.inDayScrollContainer');
     if (!sc || !sc.hasAttribute('data-owa-scrolled')) return;
@@ -2375,7 +2462,9 @@ function foresight(env) {
   }
 
   async function fitAllDay() {
-    if (fitting) return;
+    // Never alongside a slot placement: each one's synthetic mouse events
+    // land in the middle of the other's (see the restore below).
+    if (fitting || slotBusy) return;
     const area = allDayArea(), strip = allDayStrip(), heads = dayHeaders();
     if (!area || !strip || !heads.length) return;
     const { need, pitch } = allDayNeed(area);
@@ -2389,6 +2478,17 @@ function foresight(env) {
     const delta = (rows - shown) * pitch;
     if (Math.abs(delta) < pitch / 2) { lastFit = key; return; }
     if (fitRetry && performance.now() < fitRetry) return;
+    // The mousedown on the splitter makes Outlook drop the selected slot
+    // (measured 2026-11-18: no slot 6ms after it). ensureSlot then put a
+    // fresh one on the first day of the week, mid-drag: its click arrived
+    // with the drag's row-resize cursor still up, so it spoiled the drag,
+    // the strip "did not move", and the retry 3s later did it all again —
+    // five times after every week change, each one throwing the slot back
+    // to Monday under whatever the arrows had done. So the slot the user
+    // had is remembered here and put back where it was.
+    const had = labelKey(gridSlot());
+    const hadDate = had && dayHeaders().find(h => +h.date.slice(-2) === had.day)?.date;
+    const hadFocus = (document.activeElement?.id || '').startsWith('selectedInterval');
     fitting = true;
     try {
       const r = handle.getBoundingClientRect();
@@ -2405,10 +2505,18 @@ function foresight(env) {
       fire('mousedown', y0);
       await sleep(40);
       for (const y of [y0 + delta / 2, y0 + delta]) { fire('mousemove', y); await sleep(40); }
+      const hMid = allDayStrip()?.getBoundingClientRect().height ?? h0;
       fire('mouseup', y0 + delta);
       await sleep(400);
       const h1 = allDayStrip()?.getBoundingClientRect().height ?? h0;
       if (Math.abs(h1 - h0) >= 2) { lastFit = key; fitTries = 0; fitRetry = 0; return; }
+      // The strip followed the drag and went back on release: Outlook took
+      // the drag and refused the size. It will not make the strip taller
+      // than its chips need (measured 2026-11-18: 86px with four rows in
+      // use, drawn at 93 and 101 during the drag, 86 again after), so the
+      // spare row cannot be had in that week. That is an answer, not a
+      // failure; retrying it only cost the slot five more times.
+      if (Math.abs(hMid - h0) >= 2) { lastFit = key; fitTries = 0; fitRetry = 0; return; }
       // Early in the load the handle exists before Outlook has wired its
       // drag (measured 2026-09-17: the same sequence that moved the strip
       // from the console did nothing on the first pass after a reload).
@@ -2416,7 +2524,15 @@ function foresight(env) {
       if (++fitTries < 5) { fitRetry = performance.now() + 3000; return; }
       lastFit = key; fitTries = 0; fitRetry = 0;
       console.warn('[foresight] all-day strip: the splitter did not move', { from: h0, wanted: h0 + delta });
-    } finally { fitting = false; }
+    } finally {
+      fitting = false;
+      // Only when the slot was where focus lived: someone on an event or
+      // in the bar did not ask for focus to come back to the grid.
+      if (hadDate && hadFocus && !gridSlot() && !slotBusy) {
+        slotBusy = true;
+        placeSlot(hadDate, had.mins).finally(() => { slotBusy = false; });
+      }
+    }
   }
 
   // "Wednesday" becomes "Wed": the short form comes from the column's own
@@ -2697,7 +2813,7 @@ function foresight(env) {
   // click closes it. It is a [role="dialog"], so every other shortcut is
   // held while it is up, the way they are for Outlook's own dialogs.
   const HELP_ROWS = [
-    ['c', 'quick add — type a title, Enter saves'],
+    ['c', 'quick add — type the title at once, Enter saves'],
     ['n', 'new event, in Outlook\'s compose'],
     ['t', 'today'],
     ['j / k', 'next / previous week'],
@@ -2804,6 +2920,8 @@ function foresight(env) {
   });
 
   // Capture phase, so a shortcut is never swallowed by a handler further in.
+  // Ahead of the shortcuts: a letter typed while quick add opens is text.
+  addEventListener('keydown', onTypeAhead, true);
   addEventListener('keydown', onShortcut, true);
   // Before onComposeEnter, so Enter on the date row opens the picker
   // instead of saving.

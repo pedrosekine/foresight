@@ -105,7 +105,7 @@ recolouring.
 
 | key | |
 |---|---|
-| `c` | quick add — opens the compose ready to type, Enter saves |
+| `c` | quick add — type the title at once, Enter saves |
 | `n` | new event (plain Outlook compose) |
 | `t` | today |
 | `d` / `w` / `m` | day / week / month view |
@@ -142,6 +142,19 @@ grid, which makes that loop work without thinking about it.
 
 `c` is the fast path: it opens Outlook's compose stripped to **title, date,
 start, end and Save**, and focuses the title. Type and press Enter — saved.
+You do not have to wait for the box: whatever you type straight after `c`
+is held and lands in the title once it has focus.
+
+**On the grid, a letter is a command or nothing.** Outlook's own
+type-to-create, which turned any unbound key on the selected slot into the
+start of an event, is switched off. With it on, what a letter did depended on
+which letter it was: "Meeting" switched to Month view, "Lunch" started an
+inline draft, and that draft saved itself the moment anything clicked the
+grid — one stray key could file an event called "b". `c` is how you create.
+
+The slot is placed on the nearest free half hour when the current one is
+under an event, since clicking there would open the event; the arrows reach
+the rest.
 
 The date and time fields are ours, and they are there from the moment the box
 opens. Tab cycles title → date → start → end → Save and never leaves the box.
