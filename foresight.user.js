@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.22
+// @version      0.5.2.23
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -2966,9 +2966,17 @@ function foresight(env) {
   // the event back to Outlook's bounce.
   const MODIFIER_ONLY = /^(Shift|Control|Alt|Meta)$/;
   addEventListener('keydown', e => { if (!MODIFIER_ONLY.test(e.key)) held = null; }, true);
+  // A click is a decision too.
+  addEventListener('pointerdown', e => { if (e.isTrusted) held = null; }, true);
   addEventListener('focusin', e => {
     if (!held || performance.now() > heldUntil) return;
-    if (!(e.target.id || '').startsWith('selectedInterval')) return;
+    // Week view bounces focus to the slot. Month view bounces it to its own
+    // roving event — measured 2026-11-21 in the extension: after Outlook's
+    // arrows, Tab put focus on the 19th's event at 13ms and Outlook moved
+    // it to the 26 Oct event (its tabindex-0 one) at 16ms, no key between.
+    const bounced = (e.target.id || '').startsWith('selectedInterval')
+      || (inMonth() && e.target !== held && !!surface()?.contains(e.target));
+    if (!bounced) return;
     const el = held;
     held = null;
     setTimeout(() => { if (el.isConnected && document.activeElement !== el) el.focus(); }, 0);
@@ -3065,11 +3073,36 @@ function foresight(env) {
       if (!el || !cell.contains(el) || el.closest('[role="button"]')) continue;
       if (clickAt(x, y)) {
         if (document.activeElement !== cell) cell.focus();
+        cancelOwnDraft(cell);
         return true;
       }
     }
     cell.focus();                            // better than nothing: Tab and Space still work
     return false;
+  }
+  // The colour test above can miss: straight after a switch back to month
+  // view, Outlook had not painted its selection yet and our click landed on
+  // the selected day all the same (measured in the extension: m, w, m left
+  // focus in an empty inline field). So after our own click, an empty field
+  // that appears is ours to close — Escape on it, which was measured to
+  // drop it without saving and hand focus back to the day. A field with
+  // anything typed in it, or one that was there before, is never touched.
+  function cancelOwnDraft(cell, tries = 10) {
+    const field = surface()?.querySelector('input, textarea');
+    const inCell = f => {
+      const r = f.getBoundingClientRect(), b = cell.getBoundingClientRect();
+      return r.left >= b.left - 1 && r.left < b.right && r.top >= b.top - 1 && r.top < b.bottom;
+    };
+    if (field && isVisible(field) && !field.value && inCell(field)) {
+      for (const type of ['keydown', 'keyup']) {
+        field.dispatchEvent(new KeyboardEvent(type, {
+          key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true,
+        }));
+      }
+      setTimeout(() => { if (cell.isConnected && focusLost(document.activeElement)) cell.focus(); }, 100);
+      return;
+    }
+    if (tries > 0) setTimeout(() => cancelOwnDraft(cell, tries - 1), 100);
   }
   const cellOn = date => monthCells().find(c => cellDate(c) === date) || null;
   const monthDayCell = () => {
