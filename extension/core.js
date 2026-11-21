@@ -2436,10 +2436,18 @@ function foresight(env) {
   // earlier version restored it whenever the active element was not the slot
   // exactly, which fought the user: tabbing to an event handed focus straight
   // back to the grid, so events could not be reached at all.
+  // Focus nobody holds: nothing, body, or the stray sink Outlook parks it
+  // on when the focused node goes away. Measured 2026-11-21: switching from
+  // month view (focus on a day) to week left focus on an <i role="none"
+  // tabindex="-1"> directly under body, which none of the "body" checks
+  // recognised — so no slot was placed and the arrows and Tab were dead.
+  const focusLost = ae => !ae || ae === document.body
+    || (ae.parentElement === document.body && ae.getAttribute('role') === 'none');
+
   function keepGridFocused() {
     if (composeOpen() || root.hasAttribute('data-owa-quickadd')) return;
     const ae = document.activeElement;
-    if (ae && ae !== document.body) {
+    if (!focusLost(ae)) {
       // Inside the calendar, focus is Outlook's business — slot or event.
       if (surface()?.contains(ae)) return;
       // Somewhere else deliberate: our bar, a field, a dialog, the sidebar.
@@ -2573,7 +2581,7 @@ function foresight(env) {
   // focus on a div at load; that is not a place the user put it.
   const focusIdle = () => {
     const ae = document.activeElement;
-    return !ae || ae === document.body
+    return focusLost(ae)
       || (ae.tagName === 'DIV' && !ae.getAttribute('role')
           && !ae.closest('#omarchy-owa-bar, #omarchy-owa-toggle, [role="dialog"]'));
   };
@@ -2979,9 +2987,22 @@ function foresight(env) {
   const cellDate = c => ((c && c.id || '').match(/^monthDayCell_(\d{4}-\d{2}-\d{2})/) || [])[1] || null;
   const inMonth = () => inCalendar() && !!q(MONTH_CELL);
   let monthDate = null;                      // the day selected
+  // Which day Outlook has selected, in which grid. A click on the day that
+  // is already selected starts Outlook's inline new event — measured
+  // 2026-11-21 in the extension: back from the bar to the selected 20th,
+  // the click opened a text field there, and the next arrow typed into
+  // it. So a day already selected is only focused. Outlook's arrows move
+  // the selection with focus, so a focus that arrives on a cell is taken
+  // as the selection too — except our own plain .focus(), which is not.
+  let selected = null;                       // { date, grid }
+  let plainFocus = false;
+  const gridKey = () => monthCells()[0]?.id || '';
   addEventListener('focusin', e => {
-    if (e.target.matches?.(MONTH_CELL)) monthDate = cellDate(e.target);
+    if (!e.target.matches?.(MONTH_CELL)) return;
+    monthDate = cellDate(e.target);
+    if (!plainFocus) selected = { date: monthDate, grid: gridKey() };
   }, true);
+  const focusOnly = cell => { plainFocus = true; try { cell.focus(); } finally { plainFocus = false; } };
   function monthCellOf(el) {
     if (!el) return null;
     if (el.matches?.(MONTH_CELL)) return el;
@@ -3004,13 +3025,21 @@ function foresight(env) {
   }
   // Select a day the way a mouse does: a click on an empty corner.
   function selectMonthCell(cell) {
+    if (selected && selected.date === cellDate(cell) && selected.grid === gridKey()) {
+      if (document.activeElement !== cell) focusOnly(cell);
+      return true;
+    }
     const r = cell.getBoundingClientRect();
     for (const [x, y] of [[r.left + 4, r.bottom - 4], [r.right - 6, r.top + 8]]) {
       const el = document.elementFromPoint(x, y);
       if (!el || !cell.contains(el) || el.closest('[role="button"]')) continue;
-      if (clickAt(x, y)) { if (document.activeElement !== cell) cell.focus(); return true; }
+      if (clickAt(x, y)) {
+        selected = { date: cellDate(cell), grid: gridKey() };
+        if (document.activeElement !== cell) focusOnly(cell);
+        return true;
+      }
     }
-    cell.focus();                            // better than nothing: Tab and Space still work
+    focusOnly(cell);                         // better than nothing: Tab and Space still work
     return false;
   }
   const cellOn = date => monthCells().find(c => cellDate(c) === date) || null;
@@ -3025,9 +3054,10 @@ function foresight(env) {
   // Throttled like ensureSlot.
   let nextMonthTry = 0;
   function ensureMonthDay() {
-    if (!inMonth() || overlayOpen() || draftOpen() || slotBusy) return;
+    if (!inMonth()) { selected = null; return; }   // a fresh month view selects nothing
+    if (overlayOpen() || draftOpen() || slotBusy) return;
     const ae = document.activeElement;
-    if (ae && ae !== document.body) return;
+    if (!focusLost(ae)) return;
     if (performance.now() < nextMonthTry) return;
     nextMonthTry = performance.now() + 2000;
     const cell = monthDayCell();
@@ -3088,7 +3118,7 @@ function foresight(env) {
     const ae = document.activeElement;
     const inBar = !!(ae && ae.closest && ae.closest(BAR));
     const inSurface = !!(ae && surface() && surface().contains(ae));
-    if (!inBar && !inSurface && ae !== document.body) return;
+    if (!inBar && !inSurface && !focusLost(ae)) return;
 
     // Month view: the same three stops — bar, the selected day, that day's
     // first event — with the day standing in for the slot.
@@ -3113,7 +3143,7 @@ function foresight(env) {
         toBar();
         return;
       }
-      if (inBar || ae === document.body) { toDay(); return; }
+      if (inBar || focusLost(ae)) { toDay(); return; }
       if (onEvent) { toBar(); return; }
       if (onCell) { const ev = firstEvent(); if (ev) holdFocus(ev); else toBar(); return; }
       toDay();
@@ -3158,7 +3188,7 @@ function foresight(env) {
       toBar();                                            // slot ← bar
       return;
     }
-    if (inBar || ae === document.body) { toCalendar(); return; }   // bar → slot
+    if (inBar || focusLost(ae)) { toCalendar(); return; }   // bar → slot
     if (at >= 0) { toBar(); return; }                          // event → bar
     const target = near();                                     // slot → event
     if (target) holdFocus(target); else toBar();
