@@ -105,17 +105,17 @@ recolouring.
 
 | key | |
 |---|---|
-| `c` or `Enter` on the slot | quick add — type the title at once, Enter saves |
+| `c` or `Enter` on the slot | quick add — type the title at once, Enter saves (on a day in month view, too) |
 | `n` | new event (plain Outlook compose) |
 | `t` | today |
 | `d` / `w` / `m` | day / week / month view |
 | `j` / `k` | next / previous period (vim direction) |
 | `Ctrl+→` / `Ctrl+←` | the same, for hands on the arrows |
-| `s` | show / hide the calendars sidebar |
+| `s` | into the sidebar — month picker and calendars; `s` or `Esc` back to the grid |
 | `Space` | walk the events on the day you are looking at, one per press |
 | `Tab` | rotate: bar → slot → nearest event → bar |
 | `Esc` | close quick add (asks first if you typed something) |
-| `←` `→` | move along the action bar, once you are on it |
+| `←` `→` | move along the action bar, once you are on it; the week title opens the date picker, focused on the day |
 | `?` | show the keys |
 
 **Tab is a three-stop rotation**, the same three in either direction:
