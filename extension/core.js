@@ -787,6 +787,14 @@ function foresight(env) {
   // left alone; Tab only ever moves between stops, so it never trips this.
   let titleHoldUntil = 0, lastPointer = 0;
   const holdTitle = () => { titleHoldUntil = performance.now() + 3000; };
+  // Focus somewhere in the compose that is not one of its stops, inside the
+  // hold: Outlook has taken it, and it is about to be put back.
+  const titleStolen = () => {
+    if (performance.now() > titleHoldUntil || !quickAddActive || !composeOpen()) return false;
+    const modal = composeModal(), ae = document.activeElement;
+    return !!modal && modal.contains(ae) && !quickAddStops().includes(ae)
+        && !(ae.closest && ae.closest('#omarchy-qa-row'));
+  };
   addEventListener('pointerdown', () => { lastPointer = performance.now(); }, true);
   addEventListener('focusin', e => {
     if (performance.now() > titleHoldUntil || !quickAddActive || !composeOpen()) return;
@@ -800,6 +808,7 @@ function foresight(env) {
       if (!title || document.activeElement === title) return;
       title.focus();
       title.setSelectionRange?.(title.value.length, title.value.length);
+      flushTypeAhead(title);      // anything typed while it was away
     }, 0);
   }, true);
 
@@ -904,6 +913,22 @@ function foresight(env) {
       e.stopPropagation();
       e.stopImmediatePropagation();
       return;
+    }
+    // Outlook's late focus move (see holdTitle) is put right a frame or so
+    // later — measured 2026-11-21: taken at 844ms, back on the title at
+    // 962ms. A key in that gap would land on "Open in new window", so it is
+    // held like any key typed before the title had focus, and Enter there
+    // puts focus back and saves the way Enter in the title does.
+    if (!typeAhead && titleStolen()) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+        const title = q('[id$="_SUBJECT"] input');
+        title?.focus();
+        flushTypeAhead(title);
+        if (!otherDialogOpen() && !(qaRow && qaRow.querySelector('input[data-owa-refused]'))) commitAndSave();
+        return;
+      }
+      typeAhead = { text: '', until: titleHoldUntil };
     }
     if (!typeAhead) return;
     if (performance.now() > typeAhead.until) { typeAhead = null; return; }
