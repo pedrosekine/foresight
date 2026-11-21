@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.16
+// @version      0.5.2.17
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -2591,7 +2591,7 @@ function foresight(env) {
   async function followSlot(nav, go) {
     const before = dayHeaders().map(h => h.date).join();
     const prev = labelKey(gridSlot());
-    const idx = prev ? dayHeaders().findIndex(h => +h.date.slice(-2) === prev.day) : -1;
+    const idx = prev ? dayHeaders().findIndex(h => h.date === prev.date) : -1;
     slotBusy = true;
     try {
       go();
@@ -2619,38 +2619,70 @@ function foresight(env) {
   // what Outlook does and what makes it feel arbitrary when you have arrowed
   // to 15:00 and land on something at 08:00.
   //
-  // Position cannot be used for any of this: the selected slot's rect is zero
-  // wide and spans the entire day (w:0, h:1920), so it says nothing about
-  // where you are. The aria-labels do — "17:30 to 18:00, Tuesday, August 25,
-  // 2026" — and the numbers in them are the same in every locale even though
-  // the words are not. Day headers carry a date but no year, so requiring a
-  // year keeps them out without naming them.
+  // Which day, without reading words. Measured 2026-11-21: every event sits
+  // in a [data-calitemid] wrapper inside one shared grid (no per-day
+  // container), and the day headers carry [data-column-date] with their
+  // x and width — Outlook's own unequal widths, which it positions events
+  // by. So an event's day is the header its left edge sits under, which no
+  // locale can change. The old key read "November 21, 2026" out of the
+  // aria-label and returned nothing for "Samstag, 21. November 2026", which
+  // would have taken Tab, Space and the fade off every event in a German
+  // Outlook (found in review; that locale itself is not yet measured).
+  //
+  // The slot cannot be placed that way: its rect is zero wide and its x is
+  // not its column's. Its label's numbers still say which day it is —
+  // whichever number left after the times matches a day on screen. And
+  // times are read with an AM/PM if there is one: "2:00 PM" is 14:00.
+  const headerAt = x => dayHeaders().find(h => {
+    const r = h.el.getBoundingClientRect();
+    return x >= r.left && x < r.right;
+  });
+  // A colon only: a dot would take "v1.20" or "12.30" in a title for a time.
+  const TIME = /(\d{1,2}):(\d{2})\s*([AaPp])?\.?\s?[Mm]?\.?/g;
+  const labelMins = l => {
+    const t = [...l.matchAll(TIME)][0];
+    if (!t) return 0;                                   // all-day sorts first
+    let h = +t[1];
+    const ap = (t[3] || '').toLowerCase();
+    if (ap === 'p' && h < 12) h += 12;
+    if (ap === 'a' && h === 12) h = 0;
+    return h * 60 + (+t[2]);
+  };
+  const slotDate = l => {
+    const rest = l.replace(TIME, ' ');
+    const nums = (rest.match(/\d+/g) || []).map(Number).filter(n => n >= 1 && n <= 31);
+    const heads = dayHeaders();
+    // In label order: the date comes before "2 events, 2 free", and a 2 in
+    // a week that holds the 2nd must not win.
+    for (const n of nums) {
+      const h = heads.filter(h => +h.date.slice(-2) === n);
+      if (h.length === 1) return h[0].date;
+    }
+    return null;
+  };
   const labelKey = el => {
-    const l = (el && el.getAttribute('aria-label')) || '';
-    const date = /\b(\d{1,2}),\s*(\d{4})\b/.exec(l);
+    if (!el) return null;
+    const l = el.getAttribute('aria-label') || '';
+    const r = el.getBoundingClientRect();
+    const isSlot = (el.id || '').startsWith('selectedInterval');
+    const date = isSlot ? slotDate(l) : headerAt(r.left + 4)?.date;
     if (!date) return null;
-    const time = /(\d{1,2}):(\d{2})/.exec(l);
-    return {
-      day: +date[1],
-      year: +date[2],
-      mins: time ? (+time[1]) * 60 + (+time[2]) : 0,   // all-day sorts first
-      x: Math.round(el.getBoundingClientRect().x),
-    };
+    return { date, mins: labelMins(l), x: Math.round(r.x) };
   };
 
-  // Chronological order. Sorting on the day number rather than a parsed date
-  // is deliberate: month names are translated, and within any one view a day
-  // number appears once. It misorders across a month boundary in month view,
-  // which is a smaller price than depending on locale.
+  // Chronological order: by the column's date, then time, then left to
+  // right. Only Outlook's event wrappers count, so the day headers, "+N"
+  // and the slot never get in.
   function calendarEvents() {
     const s = surface();
     if (!s) return [];
-    return [...s.querySelectorAll('[role="button"][aria-label]')]
+    return [...s.querySelectorAll('[data-calitemid] [role="button"][aria-label]')]
       .filter(isVisible)
       .filter(el => !(el.id || '').startsWith('selectedInterval'))
       .map(el => ({ el, key: labelKey(el) }))
       .filter(o => o.key)
-      .sort((a, b) => a.key.day - b.key.day || a.key.mins - b.key.mins || a.key.x - b.key.x);
+      .sort((a, b) => (a.key.date < b.key.date ? -1 : a.key.date > b.key.date ? 1 : 0)
+                      || a.key.mins - b.key.mins || a.key.x - b.key.x);
   }
 
   // Past events: over on a day before today, or ended before now on today.
@@ -2743,7 +2775,7 @@ function foresight(env) {
     // to Monday under whatever the arrows had done. So the slot the user
     // had is remembered here and put back where it was.
     const had = labelKey(gridSlot());
-    const hadDate = had && dayHeaders().find(h => +h.date.slice(-2) === had.day)?.date;
+    const hadDate = had && had.date;
     const hadFocus = (document.activeElement?.id || '').startsWith('selectedInterval');
     fitting = true;
     try {
@@ -2841,8 +2873,8 @@ function foresight(env) {
     if (!here || !events.length) return events[0];
     let best = events[0], bestDistance = Infinity;
     for (const o of events) {
-      const distance = Math.abs(o.key.day - here.day) * 100000
-                     + Math.abs(o.key.mins - here.mins);
+      const days = Math.abs(Date.parse(o.key.date) - Date.parse(here.date)) / 864e5;
+      const distance = days * 100000 + Math.abs(o.key.mins - here.mins);
       if (distance < bestDistance) { bestDistance = distance; best = o; }
     }
     return best;
@@ -2903,7 +2935,7 @@ function foresight(env) {
     const onEvent = isEvent(ae) && labelKey(ae.closest('[role="button"][aria-label]'));
     const here = onEvent || labelKey(gridSlot());
     if (!here) return false;
-    const sameDay = calendarEvents().filter(o => o.key.day === here.day);
+    const sameDay = calendarEvents().filter(o => o.key.date === here.date);
     if (!sameDay.length) return false;
     const at = sameDay.findIndex(o => o.el === ae || o.el.contains(ae));
     const next = at >= 0 ? sameDay[(at + 1) % sameDay.length] : nearestEvent(sameDay);
