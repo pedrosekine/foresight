@@ -354,6 +354,24 @@ function foresight(env) {
       const selectAll = () => setTimeout(() => input.select(), 0);
       input.addEventListener('focus', selectAll);
       input.addEventListener('click', selectAll);
+      // The select above lands a tick after focus, and a key typed inside
+      // that tick went after the old value instead of replacing it —
+      // measured 2026-11-21: "fri" typed straight after Tab became
+      // "2026-11-21fri". So until the field has been edited, the first
+      // character or Backspace replaces the whole value whatever the
+      // selection says.
+      let fresh = false;
+      input.addEventListener('focus', () => { fresh = true; });
+      input.addEventListener('keydown', e => {
+        if (!fresh || e.ctrlKey || e.metaKey || e.altKey) return;
+        if (/^(Shift|CapsLock|Dead|Process)$/.test(e.key)) return;   // still about to type
+        if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
+          input.value = '';
+          if (e.key !== 'Delete' && e.key !== 'Backspace') return void (fresh = false);
+          e.preventDefault();
+        }
+        fresh = false;
+      });
       return input;
     };
 
@@ -943,6 +961,15 @@ function foresight(env) {
     if (performance.now() > typeAhead.until) { typeAhead = null; return; }
     const title = q('[id$="_SUBJECT"] input');
     if (title && document.activeElement === title) { flushTypeAhead(title); return; }
+    // Focus is on one of the box's own fields or Save: the user has moved
+    // on, so whatever was held is the title's, and this key is the field's.
+    // Holding on here swallowed "fri" typed into the date field after Tab
+    // (measured 2026-11-21: the field never saw it, and nothing was said).
+    const ae = document.activeElement;
+    if (ae && ae.closest && (ae.closest('#omarchy-qa-row') || ae.hasAttribute('data-owa-savebtn'))) {
+      flushTypeAhead(title);
+      return;
+    }
     if (e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.key === 'Escape') { typeAhead = null; return; }
     if (e.key === 'Backspace') typeAhead.text = typeAhead.text.slice(0, -1);
