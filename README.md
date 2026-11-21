@@ -127,8 +127,8 @@ recolouring.
 Everything else on the page is out of the tab order, so the next press is
 always predictable and the bar is never more than two away.
 
-**There is always a selected slot** in day and week view (month view has
-none yet). Outlook creates none on load and drops
+**There is always a selected slot**: a half hour in day and week view, a
+day in month view. Outlook creates none on load and drops
 it after Today, Next or Previous, which would leave the arrow keys, Space and
 `c` dead until you clicked the grid. So the extension selects one itself: the
 current half hour on today when the app opens or after `t`, and the same
@@ -157,6 +157,15 @@ grid — one stray key could file an event called "b". `c` is how you create.
 The slot is placed on the nearest free half hour when the current one is
 under an event, since clicking there would open the event; the arrows reach
 the rest.
+
+**Month view works the same way, with a day for the slot.** Outlook has its
+own keyboard model there once a day is selected — the arrows move by day and
+week, and `c` or `Enter` add an event on that day — but it selects nothing on
+its own. So the day is selected the way a mouse would: today on entering,
+the same day of the month after `j` / `k`. Tab goes bar → day → its first
+event, and Space walks that day's events. Each day's cell carries its date in
+its id (`monthDayCell_2026-11-20T…`), which is how this stays the same in
+every language.
 
 The date and time fields are ours, and they are there from the moment the box
 opens. Tab cycles title → date → start → end → Save and never leaves the box.

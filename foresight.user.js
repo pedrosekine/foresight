@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.17
+// @version      0.5.2.18
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -1024,7 +1024,10 @@ function foresight(env) {
     // word-jump, because typing bailed out above.
     // Enter on the slot creates there, the same as `c`. On an event, Enter
     // stays Outlook's and opens it; only the slot is taken.
-    const onSlot = (e.target?.id || '').startsWith('selectedInterval');
+    // A selected day in month view is a slot as far as the keys go: Enter
+    // and `c` add an event on it, and a stray letter starts nothing.
+    const onSlot = (e.target?.id || '').startsWith('selectedInterval')
+      || (inMonth() && !!e.target?.matches?.(MONTH_CELL));
     const binding = e.ctrlKey
       ? (e.shiftKey ? null : { ArrowLeft: SHORTCUTS.k, ArrowRight: SHORTCUTS.j }[e.key])
       : (e.key === 'Enter' ? (onSlot && !e.shiftKey ? SHORTCUTS.c : null)
@@ -2589,6 +2592,7 @@ function foresight(env) {
   // change, then put the slot back where it was relative to the new week —
   // same column, same time. Today goes to today at the current half hour.
   async function followSlot(nav, go) {
+    if (inMonth()) return followMonth(nav, go);
     const before = dayHeaders().map(h => h.date).join();
     const prev = labelKey(gridSlot());
     const idx = prev ? dayHeaders().findIndex(h => h.date === prev.date) : -1;
@@ -2928,10 +2932,114 @@ function foresight(env) {
   // nothing and is not otherwise handled. It is left alone while an event is
   // focused, because Space activates a button and opening the event is the
   // more obvious meaning there.
+  // ---- month view ------------------------------------------------------
+  // Month view had no keyboard model: focus sat on body, the arrows did
+  // nothing, Tab went to the first event of the previous month (found
+  // 2026-11-21). Outlook has one; it only needs a day selected to start.
+  // Measured 2026-11-21:
+  //   - Each day is a div with an id carrying its date in every locale —
+  //     "monthDayCell_2026-11-20T00:00:00.000+01:00_W. Europe Standard
+  //     Time" — tabindex -1 (today's 0), no role, no label. 42 of them.
+  //   - A click on an empty corner selects it (Outlook highlights it), and
+  //     from there Outlook's own arrows move by day and week, and `c` opens
+  //     quick add on that day (Outlook prefills it; checked: 25 and 26 Nov).
+  //   - Focusing the cell without the click does not select it: the arrows
+  //     moved from the old selection instead.
+  //   - Events are not inside their day's cell in the DOM, only within its
+  //     bounds, so a day's events are found by geometry.
+  const MONTH_CELL = '[id^="monthDayCell_"]';
+  const monthCells = () => [...(surface()?.querySelectorAll(MONTH_CELL) || [])].filter(isVisible);
+  const cellDate = c => ((c && c.id || '').match(/^monthDayCell_(\d{4}-\d{2}-\d{2})/) || [])[1] || null;
+  const inMonth = () => inCalendar() && !!q(MONTH_CELL);
+  let monthDate = null;                      // the day selected
+  addEventListener('focusin', e => {
+    if (e.target.matches?.(MONTH_CELL)) monthDate = cellDate(e.target);
+  }, true);
+  function monthCellOf(el) {
+    if (!el) return null;
+    if (el.matches?.(MONTH_CELL)) return el;
+    const r = el.getBoundingClientRect();
+    return monthCells().find(c => {
+      const b = c.getBoundingClientRect();
+      return r.left >= b.left - 1 && r.left < b.right && r.top >= b.top && r.top < b.bottom;
+    }) || null;
+  }
+  function monthEvents(cell) {
+    if (!cell) return [];
+    const b = cell.getBoundingClientRect();
+    return [...surface().querySelectorAll('[data-calitemid] [role="button"][aria-label]')]
+      .filter(el => {
+        const r = el.getBoundingClientRect();
+        return r.height > 0 && r.left >= b.left - 1 && r.left < b.right
+            && r.top >= b.top && r.top < b.bottom;
+      })
+      .sort((a, z) => a.getBoundingClientRect().top - z.getBoundingClientRect().top);
+  }
+  // Select a day the way a mouse does: a click on an empty corner.
+  function selectMonthCell(cell) {
+    const r = cell.getBoundingClientRect();
+    for (const [x, y] of [[r.left + 4, r.bottom - 4], [r.right - 6, r.top + 8]]) {
+      const el = document.elementFromPoint(x, y);
+      if (!el || !cell.contains(el) || el.closest('[role="button"]')) continue;
+      if (clickAt(x, y)) { if (document.activeElement !== cell) cell.focus(); return true; }
+    }
+    cell.focus();                            // better than nothing: Tab and Space still work
+    return false;
+  }
+  const cellOn = date => monthCells().find(c => cellDate(c) === date) || null;
+  const monthDayCell = () => {
+    const ae = document.activeElement;
+    if (ae?.matches?.(MONTH_CELL)) return ae;
+    return cellOn(monthDate) || cellOn(localDate())
+      || monthCells().find(c => cellDate(c)?.endsWith('-01')) || monthCells()[0] || null;
+  };
+  // Focus lost in month view (on body after `m`, or after a dialog):
+  // select the day — the one last selected, else today, else the 1st.
+  // Throttled like ensureSlot.
+  let nextMonthTry = 0;
+  function ensureMonthDay() {
+    if (!inMonth() || overlayOpen() || draftOpen() || slotBusy) return;
+    const ae = document.activeElement;
+    if (ae && ae !== document.body) return;
+    if (performance.now() < nextMonthTry) return;
+    nextMonthTry = performance.now() + 2000;
+    const cell = monthDayCell();
+    if (cell) selectMonthCell(cell);
+  }
+  // j / k / t in month view: wait for the grid to change, then select the
+  // same day of the month in the month now on show (the last day if it is
+  // shorter), or today for `t`.
+  async function followMonth(nav, go) {
+    const firstId = () => monthCells()[0]?.id;
+    const before = firstId();
+    const prevDay = +(cellDate(monthDayCell()) || '').slice(8) || 1;
+    slotBusy = true;
+    try {
+      go();
+      for (let i = 0; i < 30 && firstId() === before && !(nav === 0 && i >= 3); i++) await sleep(100);
+      const firsts = monthCells().map(cellDate).filter(d => d && d.endsWith('-01'));
+      const shown = firsts[0] ? firsts[0].slice(0, 7) : null;     // the month on show
+      let cell = nav === 0 ? cellOn(localDate()) : null;
+      for (let d = prevDay; !cell && shown && d >= 1; d--) {
+        cell = cellOn(`${shown}-${String(d).padStart(2, '0')}`);
+      }
+      cell = cell || monthCells()[0];
+      if (cell) { monthDate = cellDate(cell); selectMonthCell(cell); }
+    } finally { slotBusy = false; }
+  }
+
   function cycleDayEvents() {
+    const ae = document.activeElement;
+    if (inMonth()) {
+      const cell = isEvent(ae) ? monthCellOf(ae.closest('[role="button"]')) : monthDayCell();
+      const evs = monthEvents(cell);
+      if (!evs.length) return false;
+      const at = evs.findIndex(el => el === ae || el.contains(ae));
+      holdFocus(evs[(at + 1) % evs.length]);
+      return true;
+    }
     // From an event, its own day: Outlook drops the slot once focus leaves
     // it, so the slot cannot say where the walk is.
-    const ae = document.activeElement;
     const onEvent = isEvent(ae) && labelKey(ae.closest('[role="button"][aria-label]'));
     const here = onEvent || labelKey(gridSlot());
     if (!here) return false;
@@ -2954,6 +3062,36 @@ function foresight(env) {
     const inBar = !!(ae && ae.closest && ae.closest(BAR));
     const inSurface = !!(ae && surface() && surface().contains(ae));
     if (!inBar && !inSurface && ae !== document.body) return;
+
+    // Month view: the same three stops — bar, the selected day, that day's
+    // first event — with the day standing in for the slot.
+    if (inMonth()) {
+      // All of it: Outlook's month view runs its own Tab from a window
+      // listener and sends focus to today's cell (measured with a script
+      // loaded after Outlook's, whose listener ran first and did exactly
+      // that). Stopping propagation alone leaves a listener on the same
+      // window running.
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      const cell = monthDayCell();
+      const onCell = !!ae?.matches?.(MONTH_CELL);
+      const onEvent = isEvent(ae);
+      const toDay = () => { if (cell) selectMonthCell(cell); };
+      const toBar = () => barButtons()[0]?.focus();
+      const firstEvent = () => monthEvents(cell)[0];
+      if (e.shiftKey) {
+        if (inBar) { const ev = firstEvent(); if (ev) holdFocus(ev); else toDay(); return; }
+        if (onEvent) { toDay(); return; }
+        toBar();
+        return;
+      }
+      if (inBar || ae === document.body) { toDay(); return; }
+      if (onEvent) { toBar(); return; }
+      if (onCell) { const ev = firstEvent(); if (ev) holdFocus(ev); else toBar(); return; }
+      toDay();
+      return;
+    }
 
     const events = calendarEvents();
     const slot = gridSlot();
@@ -3129,6 +3267,7 @@ function foresight(env) {
       restrictTabStops();
       keepGridFocused();
       ensureSlot();
+      ensureMonthDay();
       markPast();
       dressHeaders();
       fitAllDay();
