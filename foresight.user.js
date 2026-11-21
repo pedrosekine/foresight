@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.21
+// @version      0.5.2.22
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -3013,22 +3013,26 @@ function foresight(env) {
   const cellDate = c => ((c && c.id || '').match(/^monthDayCell_(\d{4}-\d{2}-\d{2})/) || [])[1] || null;
   const inMonth = () => inCalendar() && !!q(MONTH_CELL);
   let monthDate = null;                      // the day selected
-  // Which day Outlook has selected, in which grid. A click on the day that
-  // is already selected starts Outlook's inline new event — measured
-  // 2026-11-21 in the extension: back from the bar to the selected 20th,
-  // the click opened a text field there, and the next arrow typed into
-  // it. So a day already selected is only focused. Outlook's arrows move
-  // the selection with focus, so a focus that arrives on a cell is taken
-  // as the selection too — except our own plain .focus(), which is not.
-  let selected = null;                       // { date, grid }
-  let plainFocus = false;
-  const gridKey = () => monthCells()[0]?.id || '';
+  // A click on the day Outlook already has selected starts its inline new
+  // event — measured 2026-11-21 in the extension: a text field opened in
+  // the day and the next arrow key went into it. Outlook keeps its month
+  // selection across a switch to week and back, so remembering what we
+  // clicked is not enough; the page has to say. It does by colour: 41 of
+  // the 42 days shared one background and the selected one alone had the
+  // accent (today is not marked that way). The class that does it is
+  // generated, so the test is relative: a day whose background no other
+  // day shares is the selected one.
+  function isSelectedCell(cell) {
+    const counts = new Map();
+    for (const c of monthCells()) {
+      const bg = getComputedStyle(c).backgroundColor;
+      counts.set(bg, (counts.get(bg) || 0) + 1);
+    }
+    return counts.size > 1 && counts.get(getComputedStyle(cell).backgroundColor) === 1;
+  }
   addEventListener('focusin', e => {
-    if (!e.target.matches?.(MONTH_CELL)) return;
-    monthDate = cellDate(e.target);
-    if (!plainFocus) selected = { date: monthDate, grid: gridKey() };
+    if (e.target.matches?.(MONTH_CELL)) monthDate = cellDate(e.target);
   }, true);
-  const focusOnly = cell => { plainFocus = true; try { cell.focus(); } finally { plainFocus = false; } };
   function monthCellOf(el) {
     if (!el) return null;
     if (el.matches?.(MONTH_CELL)) return el;
@@ -3051,8 +3055,8 @@ function foresight(env) {
   }
   // Select a day the way a mouse does: a click on an empty corner.
   function selectMonthCell(cell) {
-    if (selected && selected.date === cellDate(cell) && selected.grid === gridKey()) {
-      if (document.activeElement !== cell) focusOnly(cell);
+    if (isSelectedCell(cell)) {
+      if (document.activeElement !== cell) cell.focus();
       return true;
     }
     const r = cell.getBoundingClientRect();
@@ -3060,12 +3064,11 @@ function foresight(env) {
       const el = document.elementFromPoint(x, y);
       if (!el || !cell.contains(el) || el.closest('[role="button"]')) continue;
       if (clickAt(x, y)) {
-        selected = { date: cellDate(cell), grid: gridKey() };
-        if (document.activeElement !== cell) focusOnly(cell);
+        if (document.activeElement !== cell) cell.focus();
         return true;
       }
     }
-    focusOnly(cell);                         // better than nothing: Tab and Space still work
+    cell.focus();                            // better than nothing: Tab and Space still work
     return false;
   }
   const cellOn = date => monthCells().find(c => cellDate(c) === date) || null;
@@ -3080,7 +3083,7 @@ function foresight(env) {
   // Throttled like ensureSlot.
   let nextMonthTry = 0;
   function ensureMonthDay() {
-    if (!inMonth()) { selected = null; return; }   // a fresh month view selects nothing
+    if (!inMonth()) return;
     if (overlayOpen() || draftOpen() || slotBusy) return;
     const ae = document.activeElement;
     if (!focusLost(ae)) return;
