@@ -112,8 +112,9 @@ recolouring.
 | `j` / `k` | next / previous period (vim direction) |
 | `Ctrl+→` / `Ctrl+←` | the same, for hands on the arrows |
 | `s` | show / hide the calendars sidebar |
-| `Space` | walk the events on the day you are looking at |
+| `Space` | walk the events on the day you are looking at, one per press |
 | `Tab` | rotate: bar → slot → nearest event → bar |
+| `Esc` | close quick add (asks first if you typed something) |
 | `←` `→` | move along the action bar, once you are on it |
 | `?` | show the keys |
 
@@ -126,7 +127,8 @@ recolouring.
 Everything else on the page is out of the tab order, so the next press is
 always predictable and the bar is never more than two away.
 
-**There is always a selected slot.** Outlook creates none on load and drops
+**There is always a selected slot** in day and week view (month view has
+none yet). Outlook creates none on load and drops
 it after Today, Next or Previous, which would leave the arrow keys, Space and
 `c` dead until you clicked the grid. So the extension selects one itself: the
 current half hour on today when the app opens or after `t`, and the same
@@ -179,20 +181,22 @@ keyboard:
 | `c` or `Enter` | compose at that slot |
 
 Then type the title and press Enter. This is Outlook's own selection machinery,
-which is why it is reliable — see the note below on what happened when the
-script tried to drive the date fields itself instead.
+which is why it is reliable.
 
-**The date row is editable.** Tab to it and press Enter (or click it) and
-Outlook's own picker opens with start date, start time and end time. Tab walks
-title → date row → those three → Save, and never leaves the box; typing a value
-and tabbing on commits it. Enter from the title or Save files the event.
+**Dates and times can be typed.** The date field takes `24.12`, `24.12.2026`,
+`2412`, ISO, and words: `today`, `tomorrow`, a weekday (`fri`, `friday`;
+German too). A weekday means the next one after today. A value the field
+cannot read is put back, underlined, and said on screen; Enter will not save
+while a field shows that, so a typo never files an event on the wrong day.
 
-`n` opens the full compose if you need attendees, recurrence or a body.
+**Escape closes the box**, through Outlook's own close button: an untouched
+box just closes, and an edited one asks "Discard event?" with the answer
+focused, so Enter discards and Escape goes back.
 
 `n` opens the same compose untouched, for when you need attendees, recurrence,
 a location or a body.
 
-Edit the `SHORTCUTS` map in the script to change them. Keys are ignored while
+Keys are ignored while
 typing in a field and while a dialog is open, and anything with a modifier is
 left alone — so OWA's own `Alt+N`, `Alt+Shift+1..4` and `Ctrl+P` still work.
 
@@ -344,7 +348,9 @@ anchor — an inline `--fui-match-target-size` copied from the date row. In the
 full compose that row is ~513px and it all fits. In the reduced box the anchor
 is 264px while the content is 741, so the popover scrolled sideways: tabbing to
 End time scrolled Start date out of view. Dropping everything that is not a
-field brings it to 519, and `width: max-content` overrides the anchor match.
+field brings it to 519, and a `width: max-content` rule overrode the anchor
+match. Since quick add has its own fields the picker is never shown, only
+opened for the moment of the save, and that rule is gone.
 The walk stops at the fields' common ancestor, or it takes their labels with it.
 
 Widening it is not enough on its own — the form's own scroll container is 360px

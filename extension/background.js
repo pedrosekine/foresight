@@ -77,6 +77,16 @@ chrome.action.onClicked.addListener(async () => {
   });
 });
 
+// First run. Installing used to do nothing visible: ordinary tabs are left
+// alone on purpose, and the toolbar button starts hidden behind Chrome's
+// puzzle-piece menu, so a new user saw no change anywhere (found in the
+// 2026-11-21 assessment). The options page already says how to start; it
+// opens once, on install, never on an update.
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason !== 'install') return;
+  chrome.tabs.create({ url: chrome.runtime.getURL('options.html') }).catch(() => {});
+});
+
 chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
   if (!msg || msg.type !== 'fetch-theme') return false;
   fetchTheme(msg.url).then(respond, () => respond({ ok: false }));

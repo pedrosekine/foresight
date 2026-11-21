@@ -112,6 +112,36 @@ function foresight(env) {
   const isVisible = el => !!el && el.getBoundingClientRect().height > 0;
   const composeOpen = () => !!q('[id^="EVENT_CalendarCompose"]');
 
+  // The compose's own modal, and any other dialog over it. Outlook asks
+  // "Discard event?" in a dialog of its own, outside the compose (measured
+  // 2026-11-21: two [role="dialog"] laid out, only one holding the title).
+  // While that is up, Tab and Enter are its business, not the box's.
+  const composeModal = () => q('[id$="_SUBJECT"]')?.closest('[role="dialog"]') || null;
+  const otherDialogOpen = () => {
+    const modal = composeModal();
+    return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
+      .some(d => isVisible(d) && d !== modal && !(modal && modal.contains(d))
+                 && d.id !== 'omarchy-owa-help');
+  };
+
+  // Things that went wrong are said on screen, not only in the console.
+  // A failure the user cannot see is the one this project keeps paying for.
+  let sayTimer = 0;
+  function say(text, ms = 6000) {
+    let el = document.getElementById('omarchy-owa-say');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'omarchy-owa-say';
+      el.setAttribute('role', 'status');
+      el.setAttribute('aria-live', 'polite');
+      el.addEventListener('click', () => el.remove());
+      document.body.appendChild(el);
+    }
+    el.textContent = text;
+    clearTimeout(sayTimer);
+    sayTimer = setTimeout(() => el.remove(), ms);
+  }
+
   const localDate = (d = new Date()) => {
     const p = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
@@ -225,6 +255,28 @@ function foresight(env) {
     return `${pad(h)}:${pad(m)}`;
   }
 
+  // Words first, because they are what a person tries before any number:
+  // "today", "tomorrow", a weekday ("fri", "friday"), in English or German.
+  // Found 2026-11-21: "tomorrow" was silently put back to the box's date.
+  // A weekday is the next one after today, so "friday" typed on a Friday is
+  // a week on — leaving the field alone already means today.
+  const WEEKDAYS = [
+    ['sunday', 'sonntag'], ['monday', 'montag'], ['tuesday', 'dienstag'],
+    ['wednesday', 'mittwoch'], ['thursday', 'donnerstag'], ['friday', 'freitag'],
+    ['saturday', 'samstag'],
+  ];
+  function parseDateWord(s) {
+    const w = s.toLowerCase().replace(/[^a-zäöü]/g, '');
+    if (w.length < 2) return null;
+    const from = days => { const d = new Date(); d.setDate(d.getDate() + days); return localDate(d); };
+    if (['today', 'heute'].includes(w)) return from(0);
+    if (['tomorrow', 'tmrw', 'morgen'].includes(w)) return from(1);
+    if (['übermorgen', 'uebermorgen'].includes(w)) return from(2);
+    const day = WEEKDAYS.findIndex(names => names.some(n => n.startsWith(w)));
+    if (day < 0) return null;
+    return from(((day - new Date().getDay() + 6) % 7) + 1);
+  }
+
   // Day-first, matching how dates are written here: "16", "16.9", "16/09",
   // "16.09.2026", "1609", and full ISO. Missing parts come from the day the
   // box opened on.
@@ -233,6 +285,7 @@ function foresight(env) {
     if (!s) return null;
     const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
     if (iso) return `${iso[1]}-${pad(+iso[2])}-${pad(+iso[3])}`;
+    if (!/\d/.test(s)) return parseDateWord(s);
 
     const [by, bm] = baseISO.split('-').map(Number);
     const digits = s.replace(/\D/g, '');
@@ -266,10 +319,20 @@ function foresight(env) {
       input.spellcheck = false;
       input.autocomplete = 'off';
       input.setAttribute('aria-label', key);
+      // Unparseable input reverts and never saves junk — and says so. It used
+      // to revert silently, so "tomorow" quietly became today, and an Enter
+      // straight after it filed the event there. Returns false when refused,
+      // so Enter can stop rather than save the value that was put back.
       const commit = () => {
+        const typed = input.value.trim();
         const parsed = parse(input.value);
         if (parsed) { const prev = good[key]; good[key] = parsed; if (after) after(prev); }
-        input.value = good[key];      // unparseable input reverts, never saves junk
+        input.value = good[key];
+        if (parsed || !typed || typed === good[key]) { input.removeAttribute('data-owa-refused'); return true; }
+        input.setAttribute('data-owa-refused', '');
+        say(`Could not read “${typed}” as a ${key === 'date' ? 'date' : 'time'}, so it is still ${good[key]}.`
+            + (key === 'date' ? ' Try 24.12, tomorrow or friday.' : ' Try 17, 1730 or 5.30pm.'));
+        return false;
       };
       input.addEventListener('blur', commit);
       input.addEventListener('keydown', e => { if (e.key === 'Tab') commit(); });
@@ -362,9 +425,15 @@ function foresight(env) {
     // The failure that matters: if the write does not land, Outlook keeps its
     // prefilled slot and saving files the event at the wrong time, silently.
     // So the row is read back first, and a disagreement abandons the save.
+    // The end is read back too. Checking only the date and start let an end
+    // that did not land save as Outlook's own start + 30 min, silently (found
+    // in review 2026-11-21). Times are compared normalised, so "9:30" in the
+    // row and "09:30" in the field are the same time.
+    const sameTime = (a, b) => parseTime(a) === parseTime(b);
     const landed = () => {
       const slot = currentSlot();
-      return slot.date === want.date && slot.start === want.start;
+      return slot.date === want.date && sameTime(slot.start, want.start)
+          && sameTime(slot.end, want.end);
     };
     let picked = false;
     const giveUp = () => {
@@ -376,6 +445,10 @@ function foresight(env) {
                  { wanted: want, outlookHas: slot, pickerFound: picked });
       quickAddActive = false;
       unstripCompose();
+      // The box turning into Outlook's full form, with no word why, read as
+      // a glitch. Nothing was saved; say so, and what to do.
+      say(`Not saved: Outlook did not take ${want.date} ${want.start}–${want.end}. `
+          + 'Check the date and time in this form, then save it here.', 12000);
     };
     const done = () => {
       if (finished) return;
@@ -674,6 +747,7 @@ function foresight(env) {
       const title = q('[id$="_SUBJECT"] input');
       title?.focus();
       flushTypeAhead(title);
+      holdTitle();
       // One more frame so the reduced layout has settled before it shows.
       requestAnimationFrame(() =>
         requestAnimationFrame(() => root.removeAttribute('data-owa-quickadd-pending')));
@@ -702,8 +776,61 @@ function foresight(env) {
       .find(b => /\d{4}-\d{2}-\d{2}/.test((b.textContent || '').trim()));
   };
 
+  // The title has to keep focus once it has it. Measured 2026-11-21 with
+  // focusin logged after `c`: the title at 249ms, then Outlook's own
+  // "Open in new window" button at 807ms — from Outlook's focus trap, none
+  // of our .focus() calls — and the title stayed empty in 3 of 5 tries,
+  // because whatever was typed went to that button. Enter there would have
+  // popped the form out into a window of its own. So for three seconds
+  // after the box opens, focus moving to anything in the compose that is not
+  // one of its stops is put back on the title. A click is the user's, and is
+  // left alone; Tab only ever moves between stops, so it never trips this.
+  let titleHoldUntil = 0, lastPointer = 0;
+  const holdTitle = () => { titleHoldUntil = performance.now() + 3000; };
+  addEventListener('pointerdown', () => { lastPointer = performance.now(); }, true);
+  addEventListener('focusin', e => {
+    if (performance.now() > titleHoldUntil || !quickAddActive || !composeOpen()) return;
+    if (performance.now() - lastPointer < 1000) return;
+    const modal = composeModal();
+    const t = e.target;
+    if (!modal || !modal.contains(t) || quickAddStops().includes(t)) return;
+    if (t.closest && t.closest('#omarchy-qa-row')) return;
+    setTimeout(() => {
+      const title = q('[id$="_SUBJECT"] input');
+      if (!title || document.activeElement === title) return;
+      title.focus();
+      title.setSelectionRange?.(title.value.length, title.value.length);
+    }, 0);
+  }, true);
+
+  // Escape closes the box the way its own close button does. Left to
+  // Outlook, Escape on an edited draft raised "Discard event?" but left
+  // focus in the hidden fields (measured 2026-11-21): Tab cycled the box,
+  // a second Escape stacked a second dialog, and Enter — the obvious answer
+  // to "Discard?" — went to onComposeEnter and saved. Clicking the close
+  // button is what moves focus into that dialog (also measured), so Escape
+  // does exactly that. An untouched box closes with no question at all.
+  // The button is found by its icon, which is the same in every locale.
+  const composeClose = () => {
+    const modal = composeModal();
+    const icon = modal && modal.querySelector('[data-icon-name="DismissRegular"]');
+    return icon ? icon.closest('button') : null;
+  };
+  function onQuickAddEscape(e) {
+    if (e.key !== 'Escape' || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+    if (!quickAddActive || !composeOpen() || commitInFlight || otherDialogOpen()) return;
+    const close = composeClose();
+    if (!close) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    titleHoldUntil = 0;
+    close.click();
+  }
+
   function onQuickAddTab(e) {
     if (e.key !== 'Tab' || !quickAddActive || !composeOpen()) return;
+    if (otherDialogOpen()) return;       // "Discard event?" runs its own Tab
     const stops = quickAddStops();
     if (!stops.length) return;
     e.preventDefault();
@@ -723,6 +850,10 @@ function foresight(env) {
     // focus to be inside the modal looked safer but silently did nothing
     // whenever focus had drifted out, which Tab could cause on its own.
     if (!quickAddActive || !composeOpen()) return;
+    // A dialog over the box is asking something; Enter answers it, never
+    // saves behind it. Found 2026-11-21: Escape, then Enter at "Discard
+    // event?", saved the event it was meant to throw away.
+    if (otherDialogOpen()) return;
     // From the title, our own fields, or Save — every stop in the box.
     // Anywhere else in the modal is left alone, so a stray Enter cannot
     // file a half-finished event.
@@ -735,7 +866,13 @@ function foresight(env) {
     e.stopPropagation();
     // A field commits on Tab or blur; Enter has to do the same first, or
     // the start time lands without dragging the end along.
-    if (fromField && t._commit) t._commit();
+    // A value the field refused stops the save: it has been put back to
+    // what it was, and saving that is the silent wrong save this guards.
+    // The same holds from the title or Save while a field still shows a
+    // refusal: the field gets focus back instead.
+    if (fromField && t._commit && t._commit() === false) return;
+    const refused = qaRow && qaRow.querySelector('input[data-owa-refused]');
+    if (refused) { refused.focus(); return; }
     commitAndSave();
   }
 
@@ -879,7 +1016,12 @@ function foresight(env) {
       const ae = document.activeElement;
       const onButton = !!ae
         && (ae.tagName === 'BUTTON' || (ae.getAttribute && ae.getAttribute('role') === 'button'));
-      if (onButton && !(ae.id || '').startsWith('selectedInterval')) return;
+      // An event Space itself walked to is the exception: Space goes on to
+      // the next one. Measured 2026-11-21: without this the second Space
+      // opened the first event's card, so "walk the events" walked one.
+      // Enter is how an event opens; Space was only ever the walk.
+      const onEvent = isEvent(ae) && !!surface()?.contains(ae);
+      if (onButton && !onEvent && !(ae.id || '').startsWith('selectedInterval')) return;
       // Claimed whether or not there is anywhere to go. Space scrolls the
       // grid's own scroller otherwise, so a day with no events would scroll
       // the view out from under you — the conflict is in the default, not in
@@ -1039,6 +1181,19 @@ function foresight(env) {
       color: var(--neutralPrimary, inherit);
       border: 1px solid var(--neutralTertiaryAlt, #ccc); background: var(--neutralLighter, transparent);
     }
+
+    /* A line of ours for what went wrong, above Outlook's own layers (its
+       modal sits in the fluent layer host, well under this). Polite, so a
+       screen reader says it without stealing focus. */
+    #omarchy-owa-say {
+      position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+      z-index: 1000001; max-width: min(560px, 90vw); padding: 10px 16px;
+      font: 14px/1.4 var(--owa-font, system-ui, sans-serif);
+      color: var(--neutralPrimary, #242424);
+      background: var(--neutralPrimarySurface, #fff);
+      border: 1px solid var(--neutralTertiaryAlt, #ccc); border-radius: 8px;
+      box-shadow: 0 8px 28px color-mix(in srgb, var(--neutralPrimary, #000) 25%, transparent);
+    }
     .omarchy-owa-group { display: flex; align-items: center; }
 
     /* Every control is drawn like Today. Today is a Fabric button whose
@@ -1138,6 +1293,10 @@ function foresight(env) {
     #omarchy-qa-row input[aria-label="start"],
     #omarchy-qa-row input[aria-label="end"]   { width: 3.4em; }
     #omarchy-qa-row span { opacity: .55; }
+    /* A value the field could not read: it is put back, and says so. */
+    #omarchy-qa-row input[data-owa-refused] {
+      border-bottom: 2px solid var(--owa-accent, #c50f1f); padding-bottom: 5px;
+    }
     html[data-owa-quickadd] [data-owa-shell] {
       width: 100% !important;
       max-width: 100% !important;
@@ -2670,11 +2829,14 @@ function foresight(env) {
   // focused, because Space activates a button and opening the event is the
   // more obvious meaning there.
   function cycleDayEvents() {
-    const here = labelKey(gridSlot());
+    // From an event, its own day: Outlook drops the slot once focus leaves
+    // it, so the slot cannot say where the walk is.
+    const ae = document.activeElement;
+    const onEvent = isEvent(ae) && labelKey(ae.closest('[role="button"][aria-label]'));
+    const here = onEvent || labelKey(gridSlot());
     if (!here) return false;
     const sameDay = calendarEvents().filter(o => o.key.day === here.day);
     if (!sameDay.length) return false;
-    const ae = document.activeElement;
     const at = sameDay.findIndex(o => o.el === ae || o.el.contains(ae));
     const next = at >= 0 ? sameDay[(at + 1) % sameDay.length] : nearestEvent(sameDay);
     holdFocus(next.el);
@@ -2851,14 +3013,15 @@ function foresight(env) {
   // held while it is up, the way they are for Outlook's own dialogs.
   const HELP_ROWS = [
     ['c / Enter', 'quick add at the slot — type the title at once, Enter saves'],
+    ['Tab / Esc', 'in quick add: title → date → start → end → Save; Esc closes'],
     ['n', 'new event, in Outlook\'s compose'],
     ['t', 'today'],
-    ['j / k', 'next / previous week'],
+    ['j / k', 'next / previous week (day, month)'],
     ['Ctrl+→ / Ctrl+←', 'the same, for hands on the arrows'],
     ['d / w / m', 'day / week / month'],
     ['s', 'calendars sidebar'],
     ['↑ ↓ ← →', 'move the selected slot: half an hour, a day'],
-    ['Space', 'walk the events of the day you are on'],
+    ['Space', 'walk the events of the day you are on, one per press'],
     ['Tab', 'bar → slot → nearest event'],
     ['Enter / Delete', 'open / delete the focused event'],
     ['?', 'this list'],
@@ -2958,6 +3121,8 @@ function foresight(env) {
 
   // Capture phase, so a shortcut is never swallowed by a handler further in.
   // Ahead of the shortcuts: a letter typed while quick add opens is text.
+  // Escape first of all, so Outlook never sees it while the box is open.
+  addEventListener('keydown', onQuickAddEscape, true);
   addEventListener('keydown', onTypeAhead, true);
   addEventListener('keydown', onShortcut, true);
   // Before onComposeEnter, so Enter on the date row opens the picker
