@@ -216,7 +216,8 @@ the entire reason for skinning it rather than rebuilding it.
 ## Settings
 
 Extension: right-click the toolbar button, **Options**. Settings save as you
-change them and sync with your Chrome profile.
+change them and sync with your Chrome profile; an open calendar window reloads
+to take them, unless an event form is open in it.
 
 | setting | default | |
 |---|---|---|
@@ -227,7 +228,8 @@ change them and sync with your Chrome profile.
 | Also apply in normal browser tabs | off | reduce every Outlook tab, not just the app |
 | Start on the calendar | on | an installed Outlook app opens on mail; send it on |
 | View to open on | week | day, week, work week, month, or Outlook's own default; applied on the window's first load, however the app was installed |
-| Past events fade to | 55% | past events keep their colours and fade instead |
+| Past events fade to | 90% | past events turn grey and fade a little; below 90% their text falls under WCAG AA contrast |
+| Show Outlook's reminder cards | off | the reminder card Outlook shows at top right |
 | All-day events: rows before they fold | `7` | the all-day strip grows to one row more than the fullest day in view needs, up to this many; the rest fold into "+N" |
 | Font | desktop font | the desktop's UI font as the theme feed reports it (GTK's font setting), or a family you name; without the feed, `system-ui` |
 

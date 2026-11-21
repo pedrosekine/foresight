@@ -113,12 +113,25 @@
     return palettes.get(name);
   }
 
+  // The palette is read on every poll and follows at once. These are read
+  // once, when the page builds, so the options page used to say "saved"
+  // and nothing changed until the window was reloaded (found 2026-11-21).
+  // So the window reloads itself — a second later, to take a run of
+  // changes as one, and never over an open compose, where it would lose
+  // what is typed; then the change waits for the next load.
+  const ON_LOAD = ['hoursVisible', 'startHour', 'pastOpacity', 'allDayRows', 'font', 'showReminders'];
+  let reloadTimer = 0;
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'sync') return;
     for (const [key, { newValue }] of Object.entries(changes)) {
       if (newValue === undefined) delete settings[key];
       else settings[key] = newValue;
     }
+    if (!Object.keys(changes).some(k => ON_LOAD.includes(k))) return;
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => {
+      if (!document.querySelector('[id^="EVENT_CalendarCompose"]')) location.reload();
+    }, 1000);
   });
 
   foresight(env);

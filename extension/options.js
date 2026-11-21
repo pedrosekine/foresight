@@ -12,7 +12,8 @@
     applyInTabs: false,
     landOnCalendar: true,
     landingView: 'week',
-    pastOpacity: 55,
+    pastOpacity: 90,
+    showReminders: false,
     allDayRows: 7,
     font: '',
   };
@@ -44,6 +45,7 @@
     $('applyInTabs').checked = !!current('applyInTabs');
     $('landOnCalendar').checked = current('landOnCalendar') !== false;
     $('landingView').value = current('landingView');
+    $('showReminders').checked = current('showReminders') === true;
     $('feedRow').hidden = current('themeSource') !== 'feed';
   }
   render();
@@ -76,6 +78,7 @@
   $('applyInTabs').addEventListener('change', e => save('applyInTabs', e.target.checked));
   $('landOnCalendar').addEventListener('change', e => save('landOnCalendar', e.target.checked));
   $('landingView').addEventListener('change', e => save('landingView', e.target.value));
+  $('showReminders').addEventListener('change', e => save('showReminders', e.target.checked));
 
   // The feed lives on localhost, which is an optional host permission: ask
   // for it the moment the feed is chosen, while we still have the click.

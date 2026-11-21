@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.18
+// @version      0.5.2.19
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -44,7 +44,8 @@ function foresight(env) {
     hoursVisible: 14,                                 // hours on screen at once
     startHour: 6,                                     // where the grid sits on load
     themePollMs: 3000,
-    pastOpacity: 55,                                  // past events fade to this %
+    pastOpacity: 90,                                  // past events fade to this %
+    showReminders: false,                             // Outlook's own reminder cards
     allDayRows: 7,                                    // the all-day strip grows to this many rows
     font: '',                                         // '' = the system UI font
   };
@@ -55,6 +56,11 @@ function foresight(env) {
   const THEME_POLL_MS = setting('themePollMs');
   const PAST_OPACITY = Math.min(Math.max(setting('pastOpacity'), 10), 100) / 100;
   const ALL_DAY_ROWS = Math.min(Math.max(setting('allDayRows'), 1), 12);
+  // Outlook's reminder cards are hidden unless asked for: a reduction, but
+  // one that takes a capability, so it is a choice rather than a given.
+  if (setting('showReminders') === true || setting('showReminders') === 'true') {
+    document.documentElement.setAttribute('data-owa-reminders', '');
+  }
   // A family named in the settings wins; otherwise the desktop's UI font as
   // the theme feed reports it (GTK's font-name, which Omarchy sets); and
   // failing both, system-ui. Measured 2026-09-17: Chromium under Hyprland
@@ -66,7 +72,10 @@ function foresight(env) {
     return named ? `"${named}", system-ui, sans-serif` : 'system-ui, sans-serif';
   };
 
-  const HOTKEY = e => e.altKey && e.shiftKey && (e.key === 'O' || e.key === 'o');
+  // By key, and by the key's place for when the layout makes it something
+  // else: Option+Shift+O on a Mac types "Ø", which e.key reports.
+  const HOTKEY = e => e.altKey && e.shiftKey
+    && (e.key === 'O' || e.key === 'o' || e.code === 'KeyO');
 
   // Declared up here rather than beside the theme code that uses them:
   // injectCachedCss runs at document-start, and a `const` further down the
@@ -986,6 +995,15 @@ function foresight(env) {
     k: { nav: 1, title: 'Previous' },    // vim: k moves back
   };
 
+  // On a layout without Latin letters (Cyrillic, Greek, Hebrew...) e.key
+  // is never "c" or "j", so the shortcuts went dead. The key's place on the
+  // keyboard stands in, but only then: on AZERTY or Dvorak e.key is a Latin
+  // letter and wins, so `c` stays where it is printed.
+  const latinKey = e => {
+    if (/^[a-z]$/i.test(e.key) || !/^Key[A-Z]$/.test(e.code || '')) return null;
+    return SHORTCUTS[e.code.slice(3).toLowerCase()] || null;
+  };
+
   const isTyping = el => !!el && (
     el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ||
     el.tagName === 'SELECT' || el.isContentEditable);
@@ -1031,7 +1049,7 @@ function foresight(env) {
     const binding = e.ctrlKey
       ? (e.shiftKey ? null : { ArrowLeft: SHORTCUTS.k, ArrowRight: SHORTCUTS.j }[e.key])
       : (e.key === 'Enter' ? (onSlot && !e.shiftKey ? SHORTCUTS.c : null)
-                           : SHORTCUTS[e.key.toLowerCase()]);
+                           : SHORTCUTS[e.key.toLowerCase()] || latinKey(e));
 
     // Outlook has to be stopped from seeing the key at all, not merely from
     // acting on it. With a slot selected it creates an event from whatever
@@ -1185,7 +1203,7 @@ function foresight(env) {
     /* Outlook's in-app notifications: the Reminders card at top right
        lives in this pane (measured 2026-10-21: one host, three child
        slots, the reminder in the third; it does not take focus). */
-    html[data-owa-minimal] [data-app-section="NotificationPane"] {
+    html[data-owa-minimal]:not([data-owa-reminders]) [data-app-section="NotificationPane"] {
       display: none !important;
     }
 
@@ -1549,9 +1567,17 @@ function foresight(env) {
       border-radius: 0.3em; padding: 0 0.3em; line-height: 1.25;
     }
 
-    /* Past events fade rather than change colour. Marked by markPast from
-       the event's column and its label's end time. */
-    html[data-owa-minimal] [data-owa-past] { opacity: var(--owa-past-opacity) !important; }
+    /* Past events go grey, and fade only a little. Marked by markPast from
+       the event's column and its label's end time. Opacity fades the text
+       with the fill, so it cannot carry the difference on its own:
+       measured 2026-11-21 on Outlook's chips, 5.6–8.0:1 at full strength
+       fell to 2.8:1 at the old 55%, and only 90% kept every chip over
+       WCAG AA's 4.5:1 (4.8–6.8). Desaturating keeps the luminance, and so
+       the contrast, and is the cue instead. */
+    html[data-owa-minimal] [data-owa-past] {
+      opacity: var(--owa-past-opacity) !important;
+      filter: saturate(0.25);
+    }
 
     /* Text on a recoloured chip, chosen by contrast in mapInline. */
     [data-owa-chip], [data-owa-chip] * { color: var(--owa-chip-fg) !important; }

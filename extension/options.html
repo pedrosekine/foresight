@@ -46,6 +46,10 @@
       <input type="checkbox" id="applyInTabs">
       Also apply in normal browser tabs
     </label>
+    <label class="check">
+      <input type="checkbox" id="showReminders">
+      Show Outlook's reminder cards
+    </label>
   </section>
 
   <section>
@@ -64,8 +68,12 @@
     </label>
     <label>
       Past events fade to (%)
-      <input type="number" id="pastOpacity" min="10" max="100" step="5" placeholder="55">
+      <input type="number" id="pastOpacity" min="10" max="100" step="5" placeholder="90">
     </label>
+    <p class="hint">
+      Past events also turn grey. Below 90% their text gets harder to read
+      than the usual accessibility minimum.
+    </p>
     <label>
       All-day events: rows before they fold
       <input type="number" id="allDayRows" min="1" max="12" step="1" placeholder="7">
@@ -98,22 +106,27 @@
   <section>
     <h2>Keyboard</h2>
     <table>
-      <tr><td><kbd>c</kbd></td><td>quick add: type a title, Tab through date and times, Enter saves</td></tr>
+      <tr><td><kbd>?</kbd></td><td>all the keys, in the calendar</td></tr>
+      <tr><td><kbd>c</kbd> or <kbd>Enter</kbd></td><td>quick add on the selected slot or day: type a title, Tab through date and times, Enter saves, Esc closes</td></tr>
       <tr><td><kbd>n</kbd></td><td>new event, full form</td></tr>
       <tr><td><kbd>t</kbd></td><td>today</td></tr>
       <tr><td><kbd>d</kbd> <kbd>w</kbd> <kbd>m</kbd></td><td>day, week, month</td></tr>
       <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>next, previous period</td></tr>
-      <tr><td><kbd>s</kbd></td><td>show or hide the calendars sidebar</td></tr>
+      <tr><td><kbd>s</kbd></td><td>into the sidebar (month picker, calendars); <kbd>s</kbd> or <kbd>Esc</kbd> back</td></tr>
       <tr><td><kbd>Space</kbd></td><td>walk the events of the day you are on</td></tr>
+      <tr><td><kbd>Enter</kbd> <kbd>Delete</kbd></td><td>open or delete the focused event</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>←</kbd> <kbd>→</kbd></td><td>previous, next period</td></tr>
       <tr><td><kbd>Tab</kbd></td><td>bar → selected slot → nearest event → bar</td></tr>
       <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>move the selected slot by a day; along the bar once on it</td></tr>
-      <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>move the selected slot by 30 minutes</td></tr>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>move the selected slot by 30 minutes (a week in month view)</td></tr>
       <tr><td><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td><td>show the full Outlook UI again</td></tr>
     </table>
   </section>
 
   <p class="hint">
-    Settings save as you change them. <button id="reset" type="button">Reset to defaults</button>
+    Settings save as you change them. An open calendar window reloads to
+    take them, unless an event form is open there.
+    <button id="reset" type="button">Reset to defaults</button>
   </p>
 </main>
 <script src="options.js"></script>
