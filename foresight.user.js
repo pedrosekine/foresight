@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         foresight — a better outlook (Outlook Web calendar)
 // @namespace    foresight
-// @version      0.5.2.23
+// @version      0.5.2.24
 // @description  Outlook Web reduced to a calm, keyboard-driven calendar, retinted to the current Omarchy theme.
 // @license      MIT
 // @homepageURL  https://github.com/pedrosekine/foresight
@@ -2956,10 +2956,14 @@ function foresight(env) {
   // focused once more. A key in between is the user's — an arrow moves
   // focus to the grid on purpose, and that must not be undone.
   let held = null, heldUntil = 0;
+  // Held before focusing, not after: in month view Outlook bounces focus
+  // synchronously, inside our own .focus() call (measured 2026-11-21 in the
+  // extension: our event at 8ms, Outlook's at 10ms), so a hold set after
+  // the call never saw the bounce.
   function holdFocus(el) {
-    el.focus();
     held = el;
     heldUntil = performance.now() + 1500;
+    el.focus();
   }
   // A modifier pressed on its own is not a decision — Shift ahead of a
   // capital, Ctrl ahead of a shortcut — so it must not drop the hold and hand
@@ -3080,20 +3084,19 @@ function foresight(env) {
     cell.focus();                            // better than nothing: Tab and Space still work
     return false;
   }
-  // The colour test above can miss: straight after a switch back to month
-  // view, Outlook had not painted its selection yet and our click landed on
-  // the selected day all the same (measured in the extension: m, w, m left
-  // focus in an empty inline field). So after our own click, an empty field
-  // that appears is ours to close — Escape on it, which was measured to
-  // drop it without saving and hand focus back to the day. A field with
-  // anything typed in it, or one that was there before, is never touched.
+  // The colour test above can miss, and the field does not even open where
+  // we click. Measured 2026-11-21 in the extension, m → w → m: our click on
+  // the 19th was followed 125ms later by an empty inline field in the 21st
+  // — where the week view's selected slot had been, which Outlook carries
+  // into month view as a selection. So after our own click, an empty field
+  // that appears anywhere in the grid within a second is ours to close —
+  // with Escape, which was measured to drop it without saving and hand
+  // focus back to the selected day. A field with anything typed in it, or
+  // one that was open before the click (clickAt refuses then), is never
+  // touched.
   function cancelOwnDraft(cell, tries = 10) {
     const field = surface()?.querySelector('input, textarea');
-    const inCell = f => {
-      const r = f.getBoundingClientRect(), b = cell.getBoundingClientRect();
-      return r.left >= b.left - 1 && r.left < b.right && r.top >= b.top - 1 && r.top < b.bottom;
-    };
-    if (field && isVisible(field) && !field.value && inCell(field)) {
+    if (field && isVisible(field) && !field.value) {
       for (const type of ['keydown', 'keyup']) {
         field.dispatchEvent(new KeyboardEvent(type, {
           key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true,
