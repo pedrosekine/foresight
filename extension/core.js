@@ -973,12 +973,21 @@ function foresight(env) {
 
   function onShortcut(e) {
     if (e.altKey || e.metaKey) return;               // leave OWA's own bindings alone
+    // Full Outlook, or not the calendar: none of these are ours to take.
+    // In full mode `c`, `d` and `m` used to stay bound — over Mail too.
+    if (!root.hasAttribute('data-owa-minimal') || !inCalendar()) return;
     if (help && (e.key === 'Escape' || e.key === '?')) {
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       toggleHelp();
       return;
     }
     if (isTyping(e.target) || overlayOpen()) return;
+    // Escape in the sidebar goes back to the grid; the sidebar stays open.
+    if (e.key === 'Escape' && inPane(document.activeElement)) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      backToGrid();
+      return;
+    }
     if (e.key === '?' && !e.ctrlKey) {
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       toggleHelp();
@@ -1025,7 +1034,7 @@ function foresight(env) {
     }
 
     if (binding.quickAdd) { claim(); typeAhead = { text: '', until: performance.now() + 6000 }; quickAdd(); return; }
-    if (binding.pane) { claim(); setPane(!root.hasAttribute('data-owa-pane')); return; }
+    if (binding.pane) { claim(); paneKey(); return; }
     if (binding.dayEvents) {
       // On a button already, Space means "press this" — leave it alone. That
       // is one of Outlook's events, or one of ours in the bar: events are
@@ -2387,7 +2396,7 @@ function foresight(env) {
       if (ae.closest('#omarchy-owa-bar, #omarchy-owa-toggle, #omarchy-owa-keys, input, textarea, '
                    + '[contenteditable="true"], [role="dialog"], [role="listbox"], '
                    + '[data-app-section="CalendarSurfaceNavigationToolbar"], '
-                   + '#leftPaneContainer')) return;
+                   + '#leftPaneContainer') || ae.closest(POPUPS)) return;
     }
     gridSlot()?.focus();
   }
@@ -2842,8 +2851,16 @@ function foresight(env) {
     setTimeout(() => { if (el.isConnected && document.activeElement !== el) el.focus(); }, 0);
   }, true);
 
-  const barButtons = () => [...document.querySelectorAll('#omarchy-owa-bar button')]
-    .filter(isVisible);
+  // The bar as the eye sees it: our buttons plus Outlook's own Today and
+  // the week title, in left-to-right order. The title opens Outlook's date
+  // picker, which was the one way to jump to a far date and could only be
+  // clicked (found 2026-11-21: Tab and the arrows walked ☰ D W M New ‹ ›
+  // and skipped it).
+  const BAR = '#omarchy-owa-bar, [data-app-section="CalendarSurfaceNavigationToolbar"]';
+  const barButtons = () => [...document.querySelectorAll(
+      '#omarchy-owa-bar button, [data-app-section="CalendarSurfaceNavigationToolbar"] button')]
+    .filter(isVisible)
+    .sort((a, b) => a.getBoundingClientRect().x - b.getBoundingClientRect().x);
 
   // Space walks the events on the day you are looking at, nearest first and
   // then in order, wrapping. Tab reaches one event and leaves; this is for
@@ -2876,7 +2893,7 @@ function foresight(env) {
     if (isTyping(e.target)) return;
 
     const ae = document.activeElement;
-    const inBar = !!(ae && ae.closest && ae.closest('#omarchy-owa-bar'));
+    const inBar = !!(ae && ae.closest && ae.closest(BAR));
     const inSurface = !!(ae && surface() && surface().contains(ae));
     if (!inBar && !inSurface && ae !== document.body) return;
 
@@ -2929,13 +2946,53 @@ function foresight(env) {
   function onBarArrows(e) {
     if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
     const ae = document.activeElement;
-    if (!ae || !ae.closest || !ae.closest('#omarchy-owa-bar')) return;
+    if (!ae || !ae.closest || !ae.closest(BAR)) return;
     const buttons = barButtons();
     const at = buttons.indexOf(ae);
     if (at < 0) return;
+    // Stopped, not only prevented: Outlook's toolbar runs its own arrow
+    // keys over Today and the title, and with its own arrows hidden it
+    // moved focus straight back — measured 2026-11-21, ArrowRight on the
+    // title stayed on the title.
     e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
     const next = e.key === 'ArrowRight' ? at + 1 : at - 1;
     buttons[(next + buttons.length) % buttons.length].focus();
+  }
+
+  // The week title opens Outlook's date picker: a [role="menu"] holding
+  // two Fluent grids, days and months. Opened from the keyboard it left
+  // focus on the title (measured 2026-11-21: aria-expanded true, focus on
+  // the button), so the picker was on screen and out of reach. Focus goes
+  // to the day on show in it; the arrows move by day and week, Enter picks,
+  // Escape closes it and Fluent puts focus back on the title.
+  const TITLE = '[data-app-section="CalendarSurfaceNavigationToolbar"] button[aria-haspopup="menu"]';
+  function onTitleOpen(e) {
+    if (!['Enter', ' ', 'ArrowDown'].includes(e.key) || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (!root.hasAttribute('data-owa-minimal')) return;
+    const t = e.target;
+    if (!t || !t.matches || !t.matches(TITLE)) return;
+    const cell = () => {
+      const grid = [...document.querySelectorAll('[role="menu"] [role="grid"]')].find(isVisible);
+      return grid && (grid.querySelector('[role="gridcell"][aria-selected="true"][tabindex="0"]')
+        || grid.querySelector('[role="gridcell"][aria-current="date"]')
+        || grid.querySelector('[role="gridcell"][aria-selected="true"]'));
+    };
+    // Fluent's menu puts focus on its own first control ("Go to previous
+    // month") once it opens, after anything we do on the way — measured.
+    // So wait for focus to arrive in the menu, then move it to the day.
+    // Three seconds, then the day anyway.
+    const settle = (tries = 30) => {
+      const c = cell();
+      const ae = document.activeElement;
+      if (c && ((ae && ae.closest && ae.closest('[role="menu"]')) || tries <= 0)) {
+        if (ae !== c) c.focus();
+        return;
+      }
+      if (tries > 0) setTimeout(() => settle(tries - 1), 100);
+    };
+    settle();
   }
 
   // Tab should reach the calendar and the bar, and nothing else. Outlook
@@ -2957,6 +3014,14 @@ function foresight(env) {
                   + '#omarchy-owa-bar, #omarchy-owa-toggle, #omarchy-owa-keys, '
                   + '[data-app-section="CalendarSurfaceNavigationToolbar"], '
                   + '#leftPaneContainer';
+  // Outlook's popups: the event card (Accept / Decline on an invitation,
+  // "View event"), menus, the "+N" list. They mount in Fluent's layer host
+  // at body level, outside everything above, so they were untabbed as soon
+  // as they appeared — measured 2026-11-21: the card's four buttons all
+  // tabindex -1 with our marker, and Tab from "View event" went to an
+  // empty div and then to body. A popup is somewhere the user asked to go.
+  const POPUPS = '#fluent-default-layer-host, .ms-Layer, [data-portal-node], '
+               + '[role="menu"], [role="dialog"], [role="alertdialog"]';
   // Throttled: update() runs on every mutation, and this walks every
   // focusable on the page. Twice a second is far more than enough to catch
   // controls Outlook adds as you navigate.
@@ -2968,7 +3033,8 @@ function foresight(env) {
     lastRestrict = now;
     for (const el of document.querySelectorAll(FOCUSABLE)) {
       if (el.closest('[id^="ModalFocusTrapZone"]')) continue;   // compose owns its own
-      if (el.closest(PAGE_KEEP)) { restoreTab(el); continue; }
+      if (quickAddActive && composeModal()?.contains(el)) continue;   // so does quick add
+      if (el.closest(PAGE_KEEP) || el.closest(POPUPS)) { restoreTab(el); continue; }
       if (el.tabIndex < 0) continue;
       el.setAttribute('data-owa-untab', el.getAttribute('tabindex') ?? '');
       el.tabIndex = -1;
@@ -3011,6 +3077,38 @@ function foresight(env) {
     });
   }
 
+  // `s` used to show and hide the sidebar and leave focus where it was, so
+  // the month picker and the calendar list could only be clicked (found
+  // 2026-11-21). Now `s` takes you into it — opening it first if need be —
+  // and `s` or Escape from inside brings you back to the grid. Focus lands
+  // on the month picker's today, or the first day of the week on show:
+  // Fluent's day grid moves on the arrows and selects on Enter, measured on
+  // its cells (role="gridcell", tabindex 0, aria-current="date" on today).
+  const inPane = el => !!(el && el.closest && el.closest('#leftPaneContainer')
+                          && !el.closest(POPUPS));
+  function focusPane(tries = 30) {
+    const pane = q('#leftPaneContainer');
+    const grid = pane && pane.querySelector('[role="grid"]');
+    const cell = grid && (grid.querySelector('[role="gridcell"][aria-current="date"]')
+      || grid.querySelector('[role="gridcell"][aria-selected="true"]'));
+    const target = (cell && isVisible(cell)) ? cell
+      : pane && [...pane.querySelectorAll(FOCUSABLE)].find(el => isVisible(el) && el.tabIndex >= 0);
+    if (target) { target.focus(); return; }
+    if (tries > 0) setTimeout(() => focusPane(tries - 1), 100);   // a render away
+  }
+  function backToGrid() {
+    const slot = gridSlot();
+    if (slot) { slot.focus(); return; }
+    const events = calendarEvents();
+    if (events.length) holdFocus(nearestEvent(events).el);
+    else document.activeElement?.blur?.();      // body: ensureSlot places one
+  }
+  function paneKey() {
+    if (inPane(document.activeElement)) { setPane(false); backToGrid(); return; }
+    if (!root.hasAttribute('data-owa-pane')) setPane(true);
+    focusPane();
+  }
+
   const PANE_KEY = 'omarchy-owa-pane';
   function setPane(on) {
     if (on) root.setAttribute('data-owa-pane', '');
@@ -3019,11 +3117,21 @@ function foresight(env) {
     update();
   }
 
+  // Off means Outlook as it was: every control we took out of the tab order
+  // goes back (found in review 2026-11-21: the suite header and app rail
+  // stayed untabbable in "full Outlook"), and the single-letter keys stop
+  // (see onShortcut). Back on, the next update() takes them out again.
   function setEnabled(on) {
     if (on) root.setAttribute('data-owa-minimal', '');
     else root.removeAttribute('data-owa-minimal');
     try { localStorage.setItem(STORE_KEY, on ? '1' : '0'); } catch (_) {}
-    if (on) update();
+    if (on) { update(); return; }
+    const modal = quickAddActive ? composeModal() : null;
+    for (const el of document.querySelectorAll('[data-owa-untab]')) {
+      if (modal && modal.contains(el)) continue;     // the box's own whitelist
+      restoreTab(el);
+    }
+    if (help) toggleHelp();
   }
 
   // Today is Outlook's button; its tooltip gets the key like ours. React
@@ -3044,10 +3152,11 @@ function foresight(env) {
     ['j / k', 'next / previous week (day, month)'],
     ['Ctrl+→ / Ctrl+←', 'the same, for hands on the arrows'],
     ['d / w / m', 'day / week / month'],
-    ['s', 'calendars sidebar'],
+    ['s', 'into the sidebar: month picker and calendars; s or Esc back'],
     ['↑ ↓ ← →', 'move the selected slot: half an hour, a day'],
     ['Space', 'walk the events of the day you are on, one per press'],
     ['Tab', 'bar → slot → nearest event'],
+    ['← →', 'along the bar, once on it — the week title opens the date picker'],
     ['Enter / Delete', 'open / delete the focused event'],
     ['?', 'this list'],
     ['Alt+Shift+O', 'the whole of Outlook back'],
@@ -3154,6 +3263,7 @@ function foresight(env) {
   // instead of saving.
   addEventListener('keydown', onRegionTab, true);
   addEventListener('keydown', onBarArrows, true);
+  addEventListener('keydown', onTitleOpen, true);
   addEventListener('keydown', onQuickAddTab, true);
   addEventListener('keydown', onComposeEnter, true);
 
